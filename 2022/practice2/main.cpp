@@ -30,24 +30,71 @@ void glew_fail(std::string_view message, GLenum error)
 const char vertex_shader_source[] =
 R"(#version 330 core
 
+/* TASK1-5
 const vec2 VERTICES[3] = vec2[3](
     vec2(0.0, 1.0),
     vec2(-sqrt(0.75), -0.5),
     vec2( sqrt(0.75), -0.5)
 );
-
 const vec3 COLORS[3] = vec3[3](
     vec3(1.0, 0.0, 0.0),
     vec3(0.0, 1.0, 0.0),
     vec3(0.0, 0.0, 1.0)
 );
+*/
+
+// TASK6 
+const vec2 center = vec2(0.0, 0.0);
+const float rotation_angle = 60;
+const float rotation_angle_rad = rotation_angle*acos(-1)/180;
+
+const vec3 COLORS[8] = vec3[8](
+    vec3(0.5, 0.5, 0.5),
+    vec3(0.0, 1.0, 0.0),
+    vec3(0.0, 0.0, 1.0),
+    vec3(0.0, 1.0, 1.0),
+    vec3(1.0, 0.0, 1.0),
+    vec3(1.0, 1.0, 0.0),
+    vec3(1.0, 0.0, 0.0),
+    vec3(0.0, 1.0, 0.0)
+);
 
 out vec3 color;
 
+uniform float scale;
+uniform float angle;
+uniform mat4 transform;
+uniform mat4 view;
+
 void main()
 {
+    /* TASK1-5
     vec2 position = VERTICES[gl_VertexID];
-    gl_Position = vec4(position, 0.0, 1.0);
+    */
+    vec2 position = center;
+    if(gl_VertexID > 0) {
+        position = vec2(cos((gl_VertexID-1)*rotation_angle_rad), sin((gl_VertexID-1)*rotation_angle_rad));
+    }
+
+    /*
+    TASKS 1 and 2
+    
+    // task1 : 
+    gl_Position = vec4(position.x * scale, position.y * scale, 0.0, 1.0);
+
+
+    // task2 : 
+    mat4x4 rotation = mat4x4(
+        cos(angle), -sin(angle), 0, 0,
+        sin(angle), cos(angle), 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+    );
+    gl_Position = vec4(rotation * gl_Position);
+    */
+    
+    gl_Position = view * transform * vec4(position.x, position.y, 0.0, 1.0);
+    
     color = COLORS[gl_VertexID];
 }
 )";
@@ -136,12 +183,37 @@ int main() try
     if (!GLEW_VERSION_3_3)
         throw std::runtime_error("OpenGL 3.3 is not supported");
 
+    /////////////////////////////////////////////////////////////////////////////////////
+    // task6 - off VSync
+    SDL_GL_SetSwapInterval(0);
+    /////////////////////////////////////////////////////////////////////////////////////
+
     glClearColor(0.8f, 0.8f, 1.f, 0.f);
 
     GLuint vertex_shader = create_shader(GL_VERTEX_SHADER, vertex_shader_source);
     GLuint fragment_shader = create_shader(GL_FRAGMENT_SHADER, fragment_shader_source);
 
     GLuint program = create_program(vertex_shader, fragment_shader);
+
+    /////////////////////////////////////////////////////////////////////////////////////
+    // task1 - setting scale
+    const char* name_of_uniform_scale = "scale";
+    glUseProgram(program);
+    glUniform1f(glGetUniformLocation(program, name_of_uniform_scale), 0.5);
+    /////////////////////////////////////////////////////////////////////////////////////
+    // task2 - getting angle id
+    const char* name_of_uniform_angle = "angle";
+    float time = 0.f;
+    GLint id_uniform_angle = glGetUniformLocation(program, name_of_uniform_angle);
+    /////////////////////////////////////////////////////////////////////////////////////
+    // task3 - getting transform id
+    const char* name_of_uniform_transform = "transform";
+    GLint id_uniform_transform = glGetUniformLocation(program, name_of_uniform_transform);
+    /////////////////////////////////////////////////////////////////////////////////////
+    // task5 - getting view id
+    const char* name_of_uniform_view = "view";
+    GLint id_uniform_view = glGetUniformLocation(program, name_of_uniform_view);
+    /////////////////////////////////////////////////////////////////////////////////////
 
     GLuint vao;
     glGenVertexArrays(1, &vao);
@@ -171,14 +243,67 @@ int main() try
             break;
 
         auto now = std::chrono::high_resolution_clock::now();
-        float dt = std::chrono::duration_cast<std::chrono::duration<float>>(now - last_frame_start).count();
+        /////////////////////////////////////////////////////////////////////////////////////
+        // task6 - changing dt
+        //float dt = std::chrono::duration_cast<std::chrono::duration<float>>(now - last_frame_start).count();
+        float dt = 0.016f;
+        /////////////////////////////////////////////////////////////////////////////////////
         last_frame_start = now;
 
         glClear(GL_COLOR_BUFFER_BIT);
 
+        /////////////////////////////////////////////////////////////////////////////////////
+        // task 2 - setting angle
+        time += dt;
+
+        // std::cout<<dt<<std::endl; task6
+        
         glUseProgram(program);
+        glUniform1f(id_uniform_angle, time);
+        /////////////////////////////////////////////////////////////////////////////////////
+        // task3 - setting transform
+        float transform[16] = {
+            0.5f * cos(time), -0.5f * sin(time), 0, 0,
+            0.5f * sin(time), 0.5f * cos(time), 0, 0,
+            0, 0, 1, 0,
+            0, 0, 0, 1
+        };
+        glUniformMatrix4fv(id_uniform_transform, 1, GL_TRUE, transform);
+        /////////////////////////////////////////////////////////////////////////////////////
+        // task4 - adding shift to transform
+        float x = 0.6 * cos(time);
+        float y = 0.6 * sin(time);
+
+        /* need to calc mult(A,transform)
+        A = {
+            1,0,0,x
+            0,1,0,y
+            0,0,1,0
+            0,0,0,1
+        }
+
+        */
+        float transform_and_shift[16] = {
+            0.5f * cos(time), -0.5f * sin(time), 0, x,
+            0.5f * sin(time), 0.5f * cos(time), 0, y,
+            0, 0, 1, 0,
+            0, 0, 0, 1
+        };
+        glUniformMatrix4fv(id_uniform_transform, 1, GL_TRUE, transform_and_shift);
+        /////////////////////////////////////////////////////////////////////////////////////
+        // task5 - setting view
+        float aspect_ratio = 1.0f * width / height;     
+        float view[16] = {
+            1.0f/aspect_ratio, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            0, 0, 0, 1
+        };
+        glUniformMatrix4fv(id_uniform_view, 1, GL_TRUE, view);
+        /////////////////////////////////////////////////////////////////////////////////////
+
         glBindVertexArray(vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 8);
 
         SDL_GL_SwapWindow(window);
     }
