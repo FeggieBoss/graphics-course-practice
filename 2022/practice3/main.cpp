@@ -32,16 +32,23 @@ const char vertex_shader_source[] =
 R"(#version 330 core
 
 uniform mat4 view;
+uniform float shift;
+uniform int in_is_drawing;
 
 layout (location = 0) in vec2 in_position;
 layout (location = 1) in vec4 in_color;
+layout (location = 2) in float dist;
 
 out vec4 color;
+out float inter_dist;
+flat out int is_drawing;
 
 void main()
 {
     gl_Position = view * vec4(in_position, 0.0, 1.0);
     color = in_color;
+    inter_dist = dist + shift;
+    is_drawing = in_is_drawing;
 }
 )";
 
@@ -49,12 +56,17 @@ const char fragment_shader_source[] =
 R"(#version 330 core
 
 in vec4 color;
+in float inter_dist;
+flat in int is_drawing;
 
 layout (location = 0) out vec4 out_color;
 
 void main()
 {
     out_color = color;
+    if(is_drawing==0 && mod(inter_dist, 40.0) < 20.0) {
+        discard;
+    }
 }
 )";
 
@@ -107,6 +119,17 @@ struct vertex
 {
     vec2 position;
     std::uint8_t color[4];
+
+    float dist; // task6
+    
+    vertex(float x1, float x2, std::uint8_t x3, std::uint8_t x4, std::uint8_t x5, std::uint8_t x6, float x7 = 0.0) {
+        position = {x1,x2};
+        color[0] = x3;
+        color[1] = x4;
+        color[2] = x5;
+        color[3] = x6;     
+        dist     = x7; 
+    }
 };
 
 vec2 bezier(std::vector<vertex> const & vertices, float t)
@@ -169,14 +192,101 @@ int main() try
     auto program = create_program(vertex_shader, fragment_shader);
 
     GLuint view_location = glGetUniformLocation(program, "view");
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task6 для двжигающегося пунктира
+    GLuint shift_location = glGetUniformLocation(program, "shift");
+    GLuint flag_location = glGetUniformLocation(program, "in_is_drawing");
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     auto last_frame_start = std::chrono::high_resolution_clock::now();
 
-    float time = 0.f;
+    float time = 0.f;   
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task1 
+    std::vector<vertex> vertices = std::vector<vertex>({
+        vertex(0,0,255,0,0,1),
+        vertex(0,0.5,0,255,0,1),
+        vertex(0.5,0,0,0,255,1)
+    });
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task3
+    vertices = std::vector<vertex>({
+        vertex(0,0,255,0,0,1),
+        vertex(0,height,0,255,0,1),
+        vertex(width,0,0,0,255,1)
+    });
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    GLuint vbo;
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(vertex), vertices.data(), GL_STREAM_DRAW);
+
+    vertex data = vertices[2];
+    glGetBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertex), &data);
+    std::cout<< sizeof(vertex) << " " << int(data.position.x)<<std::endl;
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task2 
+    GLuint vao;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)(0));
+
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(vertex), (void*)(8));
+
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)(8+4));
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task4
+    std::vector<vertex> vertices2;
+    GLuint vbo2;
+    glGenBuffers(1, &vbo2);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo2);    
+
+    GLuint vao2;
+    glGenVertexArrays(1, &vao2);
+    glBindVertexArray(vao2);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)(0));
+
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(vertex), (void*)(8));
+
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)(8+4));
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task6
+    int quality = 4;
+
+    std::vector<vertex> vertices3;
+    GLuint vbo3;
+    glGenBuffers(1, &vbo3);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo3);    
+
+    GLuint vao3;
+    glGenVertexArrays(1, &vao3);
+    glBindVertexArray(vao3);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)(0));
+
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(vertex), (void*)(8));
+
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)(8+4));
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     bool running = true;
     while (running)
     {
+        bool is_changed = false;
+
         for (SDL_Event event; SDL_PollEvent(&event);) switch (event.type)
         {
         case SDL_QUIT:
@@ -194,22 +304,40 @@ int main() try
         case SDL_MOUSEBUTTONDOWN:
             if (event.button.button == SDL_BUTTON_LEFT)
             {
+                is_changed = true; //task6
+
                 int mouse_x = event.button.x;
                 int mouse_y = event.button.y;
+
+                ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+                // task4
+                vertices2.push_back(vertex(
+                    mouse_x,mouse_y,
+                    0,0,0,
+                    1
+                ));
+                ////////////////////////////////////////////////////////////////////////////////////////////////////////////
             }
             else if (event.button.button == SDL_BUTTON_RIGHT)
             {
-
+                is_changed = true; //task6
+                ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+                // task4
+                vertices2.pop_back();
+                ////////////////////////////////////////////////////////////////////////////////////////////////////////////
             }
             break;
         case SDL_KEYDOWN:
             if (event.key.keysym.sym == SDLK_LEFT)
             {
-
+                is_changed = true; //task6
+                --quality;
+                quality=std::max(quality,1);
             }
             else if (event.key.keysym.sym == SDLK_RIGHT)
             {
-
+                is_changed = true; //task6
+                ++quality;
             }
             break;
         }
@@ -226,14 +354,59 @@ int main() try
 
         float view[16] =
         {
-            1.f, 0.f, 0.f, 0.f,
-            0.f, 1.f, 0.f, 0.f,
+            2.0f/width, 0.f, 0.f, -1.f,
+            0.f, -2.0f/height, 0.f, 1.0f,
             0.f, 0.f, 1.f, 0.f,
             0.f, 0.f, 0.f, 1.f,
         };
 
         glUseProgram(program);
         glUniformMatrix4fv(view_location, 1, GL_TRUE, view);
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // task6 setting shift
+        glUniform1f(shift_location, time*100);
+        glUniform1i(flag_location, 1);
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // task2
+        // glDrawArrays(GL_TRIANGLES, 0, 3);
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // task4,5
+        glBindBuffer(GL_ARRAY_BUFFER, vbo2);
+        glBindVertexArray(vao2);
+        glBufferData(GL_ARRAY_BUFFER, vertices2.size() * sizeof(vertex), vertices2.data(), GL_STREAM_DRAW);
+
+        glPointSize(10);
+        glLineWidth(5.f);
+        glDrawArrays(GL_LINE_STRIP, 0, vertices2.size());
+        glDrawArrays(GL_POINTS, 0, vertices2.size());
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // task6
+        glBindBuffer(GL_ARRAY_BUFFER, vbo3);
+        glBindVertexArray(vao3);
+        if (is_changed) {
+            vertices3.clear();
+
+            int n = quality*vertices2.size()-1;
+            for(int i=0;i<=n;++i) {
+                auto p = bezier(vertices2, 1.f*i/n);
+                vertices3.push_back(
+                    vertex(
+                        p.x,
+                        p.y,
+                        255,0,255,
+                        1, 
+                        (vertices3.empty()?0:vertices3.back().dist + std::hypot(vertices3.back().position.x - p.x, vertices3.back().position.y - p.y))
+                    )
+                );
+            }
+
+            glBufferData(GL_ARRAY_BUFFER, vertices3.size() * sizeof(vertex), vertices3.data(), GL_STREAM_DRAW);
+        }
+        glUniform1i(flag_location, 0);
+        glDrawArrays(GL_LINE_STRIP, 0, vertices3.size());
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         SDL_GL_SwapWindow(window);
     }
