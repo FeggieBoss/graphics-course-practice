@@ -33,7 +33,6 @@ R"(#version 330 core
 
 uniform mat4 view;
 uniform float shift;
-uniform int in_is_drawing;
 
 layout (location = 0) in vec2 in_position;
 layout (location = 1) in vec4 in_color;
@@ -41,30 +40,28 @@ layout (location = 2) in float dist;
 
 out vec4 color;
 out float inter_dist;
-flat out int is_drawing;
 
 void main()
 {
     gl_Position = view * vec4(in_position, 0.0, 1.0);
     color = in_color;
     inter_dist = dist + shift;
-    is_drawing = in_is_drawing;
 }
 )";
 
 const char fragment_shader_source[] =
 R"(#version 330 core
+uniform int in_is_drawing;
 
 in vec4 color;
 in float inter_dist;
-flat in int is_drawing;
 
 layout (location = 0) out vec4 out_color;
 
 void main()
 {
     out_color = color;
-    if(is_drawing==0 && mod(inter_dist, 40.0) < 20.0) {
+    if(in_is_drawing==0 && mod(inter_dist, 40.0) < 20.0) {
         discard;
     }
 }
@@ -121,15 +118,6 @@ struct vertex
     std::uint8_t color[4];
 
     float dist; // task6
-    
-    vertex(float x1, float x2, std::uint8_t x3, std::uint8_t x4, std::uint8_t x5, std::uint8_t x6, float x7 = 0.0) {
-        position = {x1,x2};
-        color[0] = x3;
-        color[1] = x4;
-        color[2] = x5;
-        color[3] = x6;     
-        dist     = x7; 
-    }
 };
 
 vec2 bezier(std::vector<vertex> const & vertices, float t)
@@ -205,16 +193,16 @@ int main() try
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // task1 
     std::vector<vertex> vertices = std::vector<vertex>({
-        vertex(0,0,255,0,0,1),
-        vertex(0,0.5,0,255,0,1),
-        vertex(0.5,0,0,0,255,1)
+        {{0,0},{255,0,0},1},
+        {{0,0.5},{0,255,0},1},
+        {{0.5,0},{0,0,255},1}
     });
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // task3
     vertices = std::vector<vertex>({
-        vertex(0,0,255,0,0,1),
-        vertex(0,height,0,255,0,1),
-        vertex(width,0,0,0,255,1)
+        {{0,0},{255,0,0,1},0},
+        {{0,height},{0,255,0,1},0},
+        {{width,0},{0,0,255,1},0}
     });
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -285,7 +273,7 @@ int main() try
     bool running = true;
     while (running)
     {
-        bool is_changed = false;
+        bool is_changed2 = false, is_changed3 = false;
 
         for (SDL_Event event; SDL_PollEvent(&event);) switch (event.type)
         {
@@ -304,23 +292,23 @@ int main() try
         case SDL_MOUSEBUTTONDOWN:
             if (event.button.button == SDL_BUTTON_LEFT)
             {
-                is_changed = true; //task6
+                is_changed2 = true; //task6
 
                 int mouse_x = event.button.x;
                 int mouse_y = event.button.y;
 
                 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
                 // task4
-                vertices2.push_back(vertex(
-                    mouse_x,mouse_y,
-                    0,0,0,
-                    1
-                ));
+                vertices2.push_back({
+                    {mouse_x,mouse_y},
+                    {0,0,0,1},
+                    {0}
+                });
                 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
             }
             else if (event.button.button == SDL_BUTTON_RIGHT)
             {
-                is_changed = true; //task6
+                is_changed2 = true; //task6
                 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
                 // task4
                 vertices2.pop_back();
@@ -329,14 +317,17 @@ int main() try
             break;
         case SDL_KEYDOWN:
             if (event.key.keysym.sym == SDLK_LEFT) {
+                is_changed3 = true;
                 --quality;
                 quality=std::max(quality,1);
             }
             else if (event.key.keysym.sym == SDLK_RIGHT) {
+                is_changed3 = true;
                 ++quality;
             }
             break;
         }
+        is_changed3 = std::max(is_changed3, is_changed2);
 
         if (!running)
             break;
@@ -371,7 +362,7 @@ int main() try
         // task4,5
         glPointSize(10);
         glLineWidth(5.f);
-        if (is_changed) {
+        if (is_changed2) {
             glBindBuffer(GL_ARRAY_BUFFER, vbo2);
             glBindVertexArray(vao2);
             glBufferData(GL_ARRAY_BUFFER, vertices2.size() * sizeof(vertex), vertices2.data(), GL_STREAM_DRAW);
@@ -383,20 +374,18 @@ int main() try
         // task6
         glBindBuffer(GL_ARRAY_BUFFER, vbo3);
         glBindVertexArray(vao3);
-        if (is_changed) {
+        if (is_changed3) {
             vertices3.clear();
 
             int n = quality*vertices2.size()-1;
             for(int i=0;i<=n;++i) {
                 auto p = bezier(vertices2, 1.f*i/n);
                 vertices3.push_back(
-                    vertex(
-                        p.x,
-                        p.y,
-                        255,0,255,
-                        1, 
+                    {
+                        {p.x,p.y},
+                        {255,0,255,1}, 
                         (vertices3.empty()?0:vertices3.back().dist + std::hypot(vertices3.back().position.x - p.x, vertices3.back().position.y - p.y))
-                    )
+                    }
                 );
             }
 
