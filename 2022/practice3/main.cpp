@@ -201,8 +201,8 @@ int main() try
     // task3
     vertices = std::vector<vertex>({
         {{0,0},{255,0,0,1},0},
-        {{0,height},{0,255,0,1},0},
-        {{width,0},{0,0,255,1},0}
+        {{0,float(height)},{0,255,0,1},0},
+        {{float(width),0},{0,0,255,1},0}
     });
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -300,7 +300,7 @@ int main() try
                 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
                 // task4
                 vertices2.push_back({
-                    {mouse_x,mouse_y},
+                    {float(mouse_x),float(mouse_y)},
                     {0,0,0,1},
                     0
                 });
@@ -362,14 +362,13 @@ int main() try
         // task4,5
         glPointSize(10);
         glLineWidth(5.f);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo2);
+        glBindVertexArray(vao2);
         if (is_changed2) {
-            glBindBuffer(GL_ARRAY_BUFFER, vbo2);
-            glBindVertexArray(vao2);
             glBufferData(GL_ARRAY_BUFFER, vertices2.size() * sizeof(vertex), vertices2.data(), GL_STREAM_DRAW);
-
-            glDrawArrays(GL_LINE_STRIP, 0, vertices2.size());
-            glDrawArrays(GL_POINTS, 0, vertices2.size());
         }
+        glDrawArrays(GL_LINE_STRIP, 0, vertices2.size());
+        glDrawArrays(GL_POINTS, 0, vertices2.size());
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
         // task6
         glBindBuffer(GL_ARRAY_BUFFER, vbo3);
