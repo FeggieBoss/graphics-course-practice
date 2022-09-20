@@ -362,16 +362,15 @@ int main() try
         // task4,5
         glPointSize(10);
         glLineWidth(5.f);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo2);
         glBindVertexArray(vao2);
         if (is_changed2) {
+            glBindBuffer(GL_ARRAY_BUFFER, vbo2);
             glBufferData(GL_ARRAY_BUFFER, vertices2.size() * sizeof(vertex), vertices2.data(), GL_STREAM_DRAW);
         }
         glDrawArrays(GL_LINE_STRIP, 0, vertices2.size());
         glDrawArrays(GL_POINTS, 0, vertices2.size());
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
         // task6
-        glBindBuffer(GL_ARRAY_BUFFER, vbo3);
         glBindVertexArray(vao3);
         if (is_changed3) {
             vertices3.clear();
@@ -387,7 +386,7 @@ int main() try
                     }
                 );
             }
-
+            glBindBuffer(GL_ARRAY_BUFFER, vbo3);
             glBufferData(GL_ARRAY_BUFFER, vertices3.size() * sizeof(vertex), vertices3.data(), GL_STREAM_DRAW);
         }
         glUniform1i(flag_location, 0);
