@@ -328,15 +328,11 @@ int main() try
             }
             break;
         case SDL_KEYDOWN:
-            if (event.key.keysym.sym == SDLK_LEFT)
-            {
-                is_changed = true; //task6
+            if (event.key.keysym.sym == SDLK_LEFT) {
                 --quality;
                 quality=std::max(quality,1);
             }
-            else if (event.key.keysym.sym == SDLK_RIGHT)
-            {
-                is_changed = true; //task6
+            else if (event.key.keysym.sym == SDLK_RIGHT) {
                 ++quality;
             }
             break;
@@ -373,14 +369,16 @@ int main() try
         // glDrawArrays(GL_TRIANGLES, 0, 3);
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
         // task4,5
-        glBindBuffer(GL_ARRAY_BUFFER, vbo2);
-        glBindVertexArray(vao2);
-        glBufferData(GL_ARRAY_BUFFER, vertices2.size() * sizeof(vertex), vertices2.data(), GL_STREAM_DRAW);
-
         glPointSize(10);
         glLineWidth(5.f);
-        glDrawArrays(GL_LINE_STRIP, 0, vertices2.size());
-        glDrawArrays(GL_POINTS, 0, vertices2.size());
+        if (is_changed) {
+            glBindBuffer(GL_ARRAY_BUFFER, vbo2);
+            glBindVertexArray(vao2);
+            glBufferData(GL_ARRAY_BUFFER, vertices2.size() * sizeof(vertex), vertices2.data(), GL_STREAM_DRAW);
+
+            glDrawArrays(GL_LINE_STRIP, 0, vertices2.size());
+            glDrawArrays(GL_POINTS, 0, vertices2.size());
+        }
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
         // task6
         glBindBuffer(GL_ARRAY_BUFFER, vbo3);
