@@ -46,7 +46,7 @@ const vec3 COLORS[3] = vec3[3](
 // TASK6 
 const vec2 center = vec2(0.0, 0.0);
 const float rotation_angle = 60;
-const float rotation_angle_rad = rotation_angle*acos(-1)/180;
+const float rotation_angle_rad = rotation_angle*acos(-1.f)/180;
 
 const vec3 COLORS[8] = vec3[8](
     vec3(0.5, 0.5, 0.5),
