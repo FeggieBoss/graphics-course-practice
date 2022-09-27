@@ -176,7 +176,7 @@ int main() try
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void*)(0));
 
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_TRUE, sizeof(obj_data::vertex), (void*)(3*4));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void*)(3*4));
 
     // glEnableVertexAttribArray(2);
     // glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)(6*4));
@@ -337,7 +337,6 @@ int main() try
         glDrawElements(GL_TRIANGLES, bunny.indices.size(), GL_UNSIGNED_INT, 0);
 
         glUniformMatrix4fv(transform_location, 1, GL_TRUE, transform2);
-        glClear(GL_DEPTH_BUFFER_BIT);
         glDrawElements(GL_TRIANGLES, bunny.indices.size(), GL_UNSIGNED_INT, 0);
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
