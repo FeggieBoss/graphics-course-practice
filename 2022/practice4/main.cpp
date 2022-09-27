@@ -158,6 +158,42 @@ int main() try
 
     std::map<SDL_Keycode, bool> button_down;
 
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task1 
+    
+    //VBO
+    GLuint vbo;
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, bunny.vertices.size() * sizeof(obj_data::vertex), bunny.vertices.data(), GL_STREAM_DRAW);
+    
+    //VAO
+    GLuint vao;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void*)(0));
+
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_TRUE, sizeof(obj_data::vertex), (void*)(3*4));
+
+    // glEnableVertexAttribArray(2);
+    // glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)(6*4));
+
+    //EBO
+    GLuint ebo;
+    glGenBuffers (1, &ebo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, bunny.indices.size() * sizeof(std::uint32_t), bunny.indices.data(), GL_STATIC_DRAW);
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task4 
+    glEnable(GL_DEPTH_TEST);
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task5
+    float bunny_x = 0;
+    float bunny_y = 0;
+
     bool running = true;
     while (running)
     {
@@ -193,25 +229,118 @@ int main() try
 
         glClear(GL_COLOR_BUFFER_BIT);
 
+        // float view[16] =
+        // {
+        //     1.f, 0.f, 0.f, 0.f,
+        //     0.f, 1.f, 0.f, 0.f,
+        //     0.f, 0.f, 1.f, 0.f,
+        //     0.f, 0.f, 0.f, 1.f,
+        // };
+
+        // float transform[16] =
+        // {
+        //     1.f, 0.f, 0.f, 0.f,
+        //     0.f, 1.f, 0.f, 0.f,
+        //     0.f, 0.f, 1.f, 0.f,
+        //     0.f, 0.f, 0.f, 1.f,
+        // };
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // task3
+        float near = 0.1;
+        float far = 100;
+        float right = near * tan(90/2);
+        float left = -right;
+        float top = height*right/width;
+        float bottom = -top;
+
         float view[16] =
         {
-            1.f, 0.f, 0.f, 0.f,
-            0.f, 1.f, 0.f, 0.f,
-            0.f, 0.f, 1.f, 0.f,
-            0.f, 0.f, 0.f, 1.f,
+            2.f * near / (right -left), 0.f, (right+left)/(right-left), 0.f,
+            0.f, 2.f * near / (top-bottom), (top+bottom)/(top-bottom), 0.f,
+            0.f, 0.f, -(far+near)/(far-near), -(2*far*near)/(far-near),
+            0.f, 0.f, -1.f, 0,
         };
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-        float transform[16] =
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // task2
+        float angle = time;
+        float scale = 0.5f;
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // task5
+        float speed = 1.5;
+        if(button_down[SDLK_LEFT])
+            bunny_x -= speed * dt;
+        if(button_down[SDLK_RIGHT])
+            bunny_x += speed * dt;
+        if(button_down[SDLK_UP])
+            bunny_y += speed * dt;
+        if(button_down[SDLK_DOWN])
+            bunny_y -= speed * dt;
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+        // task2
+        float transform1[16] =
         {
-            1.f, 0.f, 0.f, 0.f,
-            0.f, 1.f, 0.f, 0.f,
-            0.f, 0.f, 1.f, 0.f,
+            cos(time) * scale, 0.f, -sin(time) * scale, bunny_x + 0.f,
+            0.f, scale, 0.f, bunny_y + 0.f,
+            sin(time) * scale, 0.f, cos(time) * scale, -3.f,
             0.f, 0.f, 0.f, 1.f,
         };
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
         glUseProgram(program);
         glUniformMatrix4fv(view_location, 1, GL_TRUE, view);
-        glUniformMatrix4fv(transform_location, 1, GL_TRUE, transform);
+        glUniformMatrix4fv(transform_location, 1, GL_TRUE, transform1);
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // task6
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_FRONT);
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // task4
+        glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // task1
+        glDrawElements(GL_TRIANGLES, bunny.indices.size(), GL_UNSIGNED_INT, 0);
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // task7
+        float base0_x=-0.9, base0_y=-0.9, base0_z = -2.f, scale0 = 0.5;
+        float transform0[16] =
+        {
+            cos(time) * scale0, -sin(time) * scale0,  0.f, base0_x + bunny_x,
+            sin(time) * scale0, cos(time) * scale0, 0.f, base0_y + bunny_y,
+            0.f, 0.f, scale0, base0_z + -3.f,
+            0.f, 0.f, 0.f, 1.f,
+        };
+
+        float base2_x=0.7, base2_y=0.2, base2_z = 2.5f, scale2 = 0.1;
+        float transform2[16] =
+        {
+            scale2, 0.f, 0.f, base2_x + bunny_x,
+            0.f, cos(time)*scale2, -sin(time)*scale2, base2_y + bunny_y,
+            0.f, sin(time)*scale2, cos(time)*scale2, base2_z + -3.f,
+            0.f,0.f,0.f,1.f
+        };
+
+        glCullFace(GL_BACK);
+
+        glUniformMatrix4fv(transform_location, 1, GL_TRUE, transform0);
+        glDrawElements(GL_TRIANGLES, bunny.indices.size(), GL_UNSIGNED_INT, 0);
+
+        glUniformMatrix4fv(transform_location, 1, GL_TRUE, transform2);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glDrawElements(GL_TRIANGLES, bunny.indices.size(), GL_UNSIGNED_INT, 0);
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
         SDL_GL_SwapWindow(window);
     }
