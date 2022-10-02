@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cassert>
 #include <random>
+#include <map>
 
 std::string to_string(std::string_view str)
 {
@@ -152,58 +153,93 @@ std::uint8_t foo(int x, int y, std::vector<point> &pnts) {
     return std::min(ret,255.f);
 }
 
+std::uint32_t add_iso_vert(vertex v, std::vector<vertex> &vertices_iso, std::map<std::pair<int,int>, std::uint32_t> &vert_iso_id) {
+    std::pair<int,int> pos = std::make_pair(int(v.position.x), int(v.position.y));
+    auto it = vert_iso_id.find(pos);
+    if(it==vert_iso_id.end()) {
+        vert_iso_id[pos] = vertices_iso.size();
+        vertices_iso.push_back(v);
+    }
+    return vert_iso_id[pos];
+}
+
+int old_width, old_height;
+int cell_size = 10;
+
+void gen_cells(std::vector<vec2> &vertices, std::vector<std::uint32_t> &indices) {
+    vertices.clear();
+    for(int i=0;i<=old_width;i+=cell_size) {
+        for(int j=0;j<=old_height;j+=cell_size) {
+            vertices.push_back({float(i), float(j)});
+        }
+    }
+
+    indices.clear();
+    for(int i=0;i<=old_width-cell_size; i+=cell_size) {
+        for(int j=0;j<=old_height-cell_size; j+=cell_size) {
+            indices.push_back((old_height/cell_size+1)*(i/cell_size)   + (j/cell_size));
+            indices.push_back((old_height/cell_size+1)*(i/cell_size)   + (j/cell_size) + 1);
+            indices.push_back((old_height/cell_size+1)*(i/cell_size+1) + (j/cell_size));
+
+            indices.push_back((old_height/cell_size+1)*(i/cell_size+1) + (j/cell_size));
+            indices.push_back((old_height/cell_size+1)*(i/cell_size+1) + (j/cell_size) + 1);
+            indices.push_back((old_height/cell_size+1)*(i/cell_size)   + (j/cell_size) + 1);
+        }
+    }
+}
+
 std::vector<segment> get_segment(float x, float y, std::vector<point> &pnts, int bound) {
     int mask = 0;
 
     if(int(foo(x,y,pnts)) >= bound) {
         mask += 8;
     }
-    x += 10;
+    x += cell_size;
     if(int(foo(x,y,pnts)) >= bound) {
         mask += 4;
     }
-    y += 10;
+    y += cell_size;
     if(int(foo(x,y,pnts)) >= bound) {
         mask += 2;
     }
-    x -= 10;
+    x -= cell_size;
     if(int(foo(x,y,pnts)) >= bound) {
         mask += 1;
     }
-    y -= 10;
+    y -= cell_size;
 
     switch (mask)
     {
     case 0:
         return {};
     case 1:
-        return {{{x, y+5}, {x+5, y+10}}};
+        return {{{x, y+cell_size/2}, {x+cell_size/2, y+cell_size}}};
     case 2:
-        return {{{x+5, y+10}, {x+10, y+5}}};
+        return {{{x+cell_size/2, y+cell_size}, {x+cell_size, y+cell_size/2}}};
     case 3:
-        return {{{x, y+5}, {x+10, y+5}}};
+        return {{{x, y+cell_size/2}, {x+cell_size, y+cell_size/2}}};
     case 4:
-        return {{{x+5, y}, {x+10, y+5}}};
+        return {{{x+cell_size/2, y}, {x+cell_size, y+cell_size/2}}};
     case 5:
-        return {{{x, y+5}, {x+5, y}}, {{x+5, y+10}, {x+10, y+5}}};
+        return {{{x, y+cell_size/2}, {x+cell_size/2, y}}, {{x+cell_size/2, y+cell_size}, {x+cell_size, y+cell_size/2}}};
     case 6:
-        return {{{x+5, y}, {x+5, y+10}}};
+        return {{{x+cell_size/2, y}, {x+cell_size/2, y+cell_size}}};
     case 7:
-        return {{{x, y+5}, {x+5, y}}};
+        return {{{x, y+cell_size/2}, {x+cell_size/2, y}}};
     case 8:
-        return {{{x, y+5}, {x+5, y}}};
+        return {{{x, y+cell_size/2}, {x+cell_size/2, y}}};
     case 9:
-        return {{{x+5, y}, {x+5, y+10}}};
+        return {{{x+cell_size/2, y}, {x+cell_size/2, y+cell_size}}};
     case 10:
-        return {{{x, y+5}, {x+5, y+10}}, {{x+5, y}, {x+10, y+5}}};
+        return {{{x, y+cell_size/2}, {x+cell_size/2, y+cell_size}}, {{x+cell_size/2, y}, {x+cell_size, y+cell_size/2}}};
     case 11:
-        return {{{x+5, y}, {x+10, y+5}}};
+        return {{{x+cell_size/2, y}, {x+cell_size, y+cell_size/2}}};
     case 12:
-        return {{{x, y+5}, {x+10, y+5}}};
+        return {{{x, y+cell_size/2}, {x+cell_size, y+cell_size/2}}};
     case 13:
-        return {{{x+5, y+10}, {x+10, y+5}}};
+        return {{{x+cell_size/2, y+cell_size}, {x+cell_size, y+cell_size/2}}};
     case 14:
-        return {{{x, y+5}, {x+5, y+10}}};
+        return {{{x, y+cell_size/2}, {x+cell_size/2, y+cell_size}}};
     case 15:
         return {};
     };
@@ -250,7 +286,8 @@ int main() try
     auto fragment_shader = create_shader(GL_FRAGMENT_SHADER, fragment_shader_source);
     auto program = create_program(vertex_shader, fragment_shader);
     
-    std::vector<vertex> vertices_iso; // для изолиний
+    std::vector<vertex> vertices_iso;
+    std::vector<std::uint32_t> indices_iso; // для изолиний
 
     std::vector<vec2> vertices; // ({
     //     {{0,0},{255,0,0,1}},
@@ -258,24 +295,27 @@ int main() try
     //     {{float(width),0},{0,0,255,1}}
     // });
 
-    for(int i=0;i<=width;i+=10) {
-        for(int j=0;j<=height;j+=10) {
-            vertices.push_back({float(i), float(j)});
-        }
-    }
+    // for(int i=0;i<=width;i+=10) {
+    //     for(int j=0;j<=height;j+=10) {
+    //         vertices.push_back({float(i), float(j)});
+    //     }
+    // }
 
     std::vector<std::uint32_t> indices;
-    for(int i=0;i<=width-10; i+=10) {
-        for(int j=0;j<=height-10; j+=10) {
-            indices.push_back((height/10+1)*(i/10) + (j/10));
-            indices.push_back((height/10+1)*(i/10) + (j/10) + 1);
-            indices.push_back((height/10+1)*(i/10+1) + (j/10));
+    // for(int i=0;i<=width-10; i+=10) {
+    //     for(int j=0;j<=height-10; j+=10) {
+    //         indices.push_back((height/10+1)*(i/10) + (j/10));
+    //         indices.push_back((height/10+1)*(i/10) + (j/10) + 1);
+    //         indices.push_back((height/10+1)*(i/10+1) + (j/10));
 
-            indices.push_back((height/10+1)*(i/10+1) + (j/10));
-            indices.push_back((height/10+1)*(i/10+1) + (j/10) + 1);
-            indices.push_back((height/10+1)*(i/10) + (j/10) + 1);
-        }
-    }
+    //         indices.push_back((height/10+1)*(i/10+1) + (j/10));
+    //         indices.push_back((height/10+1)*(i/10+1) + (j/10) + 1);
+    //         indices.push_back((height/10+1)*(i/10) + (j/10) + 1);
+    //     }
+    // }
+    old_width = width;
+    old_height = height;
+    gen_cells(vertices, indices);
 
     std::vector<color> colors(vertices.size());
 
@@ -322,19 +362,37 @@ int main() try
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(color), (void*)(0));
 
-    //EBO
+    //EBO сетка
     GLuint ebo;
+    glBindVertexArray(vao);
     glGenBuffers (1, &ebo);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(std::uint32_t), indices.data(), GL_STATIC_DRAW);
+    
+    //EBO изолинии
+    GLuint ebo_iso;
+    glBindVertexArray(vao_iso);
+    glGenBuffers (1, &ebo_iso);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_iso);
 
     // блуждающие точки
     std::vector<point> pnts(10, point(width,height));
     for(int i=0;i<10;++i)
         pnts[i]=point(width,height);
-    int old_width = width;
-    int old_height = height;
 
+    // детализации сетки
+    old_width = width;
+    old_height = height;
+    std::vector<int> cell_sizes = {4, 5, 8, 10, 20};
+    int cur_cell_size = 3;
+
+    // количество изолиний и константы
+    std::vector<int> bounds = {30, 200, 0, 80, 170};
+    std::vector<int> colors_iso = {150, 255, 70, 200, 230};
+    int iso_ct = 2;
+
+
+    std::map<SDL_Keycode, bool> button_down;
     auto last_frame_start = std::chrono::high_resolution_clock::now();
     bool running = true;
     while (running)
@@ -353,9 +411,53 @@ int main() try
                     break;
                 }
                 break;
+            case SDL_KEYDOWN:
+                button_down[event.key.keysym.sym] = true;
+                break;
+            case SDL_KEYUP:
+                button_down[event.key.keysym.sym] = false;
+                break;
         }
         if (!running)
             break;
+
+        if(button_down[SDLK_LEFT]) {
+            iso_ct = std::max(iso_ct-1, 2);
+        }
+        else if(button_down[SDLK_RIGHT]) {
+            iso_ct = std::min(iso_ct+1, 5);
+        }
+        else if(button_down[SDLK_UP]) {
+            cur_cell_size = std::min(cur_cell_size+1, 4);
+            cell_size = cell_sizes[cur_cell_size];
+
+            gen_cells(vertices, indices);
+
+            glBindVertexArray(vao);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo_pos);
+            glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(vec2), vertices.data(), GL_STREAM_DRAW);
+
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(std::uint32_t), indices.data(), GL_STATIC_DRAW);
+
+            colors.resize(vertices.size());
+        }
+        else if(button_down[SDLK_DOWN]) {
+            cur_cell_size = std::max(cur_cell_size-1, 0);
+            cell_size = cell_sizes[cur_cell_size];
+
+            gen_cells(vertices, indices);
+
+            glBindVertexArray(vao);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo_pos);
+            glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(vec2), vertices.data(), GL_STREAM_DRAW);
+
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(std::uint32_t), indices.data(), GL_STATIC_DRAW);
+
+            colors.resize(vertices.size());
+        }
+
         auto now = std::chrono::high_resolution_clock::now();
         float dt = std::chrono::duration_cast<std::chrono::duration<float>>(now - last_frame_start).count();
         last_frame_start = now;
@@ -402,33 +504,47 @@ int main() try
         glBindBuffer(GL_ARRAY_BUFFER, vbo_pos);
         glBindBuffer(GL_ARRAY_BUFFER, vbo_color);
         glBufferData(GL_ARRAY_BUFFER, colors.size() * sizeof(color), colors.data(), GL_STREAM_DRAW);
-        glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);    
+        glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
 
+
+        std::map<std::pair<int,int>, std::uint32_t> vert_iso_id;        
         vertices_iso.clear();
+        indices_iso.clear();
         for(int i=0;i<vertices.size(); ++i) {
             if(vertices[i].x == old_width || vertices[i].y == old_height)
                 continue;
 
-            auto g = get_segment(vertices[i].x, vertices[i].y, pnts, 30);
-            colors[i].color[1] = 150;
-            for(auto &el : g) {
-                vertices_iso.push_back({el.a, colors[i]});
-                vertices_iso.push_back({el.b, colors[i]});
-            }
+            for(int j=0;j<iso_ct;++j) {
+                auto g = get_segment(vertices[i].x, vertices[i].y, pnts, bounds[j]);
+                colors[i].color[1] = colors_iso[j];
+                for(auto &el : g) {
+                    indices_iso.push_back(add_iso_vert({el.a, colors[i]}, vertices_iso, vert_iso_id));
+                    indices_iso.push_back(add_iso_vert({el.b, colors[i]}, vertices_iso, vert_iso_id));
+                }
+                // auto g = get_segment(vertices[i].x, vertices[i].y, pnts, 30);
+                // colors[i].color[1] = 150;
+                // for(auto &el : g) {
+                //     indices_iso.push_back(add_iso_vert({el.a, colors[i]}, vertices_iso, vert_iso_id));
+                //     indices_iso.push_back(add_iso_vert({el.b, colors[i]}, vertices_iso, vert_iso_id));
+                // }
 
-            g = get_segment(vertices[i].x, vertices[i].y, pnts, 200);
-            colors[i].color[1] = 255;
-            for(auto &el : g) {
-                vertices_iso.push_back({el.a, colors[i]});
-                vertices_iso.push_back({el.b, colors[i]});
+                // g = get_segment(vertices[i].x, vertices[i].y, pnts, 200);
+                // colors[i].color[1] = 255;
+                // for(auto &el : g) {
+                //     indices_iso.push_back(add_iso_vert({el.a, colors[i]}, vertices_iso, vert_iso_id));
+                //     indices_iso.push_back(add_iso_vert({el.b, colors[i]}, vertices_iso, vert_iso_id));
+                // }
             }
         }
 
         glBindVertexArray(vao_iso);
         glBindBuffer(GL_ARRAY_BUFFER, vbo_iso);
         glBufferData(GL_ARRAY_BUFFER, vertices_iso.size() * sizeof(vertex), vertices_iso.data(), GL_STREAM_DRAW);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_iso);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices_iso.size() * sizeof(std::uint32_t), indices_iso.data(), GL_STATIC_DRAW);
+
         glLineWidth(10); 
-        glDrawArrays(GL_LINES, 0, vertices_iso.size());
+        glDrawElements(GL_LINES, indices_iso.size(), GL_UNSIGNED_INT, 0);
 
         SDL_GL_SwapWindow(window);   
     }
