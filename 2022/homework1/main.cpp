@@ -511,7 +511,7 @@ int main() try
         glBufferData(GL_ARRAY_BUFFER, colors.size() * sizeof(color), colors.data(), GL_STREAM_DRAW);
         glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
 
-
+        // генерация изолиний
         std::map<std::pair<int,int>, std::uint32_t> vert_iso_id;        
         vertices_iso.clear();
         indices_iso.clear();
