@@ -131,6 +131,8 @@ struct point {
     }
 };
 
+int foo_consts_id = 1;
+int foo_consts[2][4] = {{50,10,5,5}, {100,30,19,5}};
 std::uint8_t foo(int x, int y, std::vector<point> &pnts) {
     float ret = 0;
     for (auto &el : pnts) {
@@ -141,13 +143,13 @@ std::uint8_t foo(int x, int y, std::vector<point> &pnts) {
     }   
     if(ret>0.01) {
         if(ret<0.5)
-            ret*=100;
+            ret*=foo_consts[foo_consts_id][0];
         else if(ret<10)
-            ret*=30;
+            ret*=foo_consts[foo_consts_id][1];
         else if(ret<50)
-            ret*=19;
+            ret*=foo_consts[foo_consts_id][2];
         else
-            ret*=5;
+            ret*=foo_consts[foo_consts_id][3];
     }
 
     return std::min(ret,255.f);
@@ -387,7 +389,7 @@ int main() try
     int cur_cell_size = 3;
 
     // количество изолиний и константы
-    std::vector<int> bounds = {30, 200, 0, 80, 170};
+    std::vector<int> bounds = {30, 200, 0, 80, 200};
     std::vector<int> colors_iso = {150, 255, 70, 200, 230};
     int iso_ct = 2;
 
@@ -421,7 +423,10 @@ int main() try
         if (!running)
             break;
 
-        if(button_down[SDLK_LEFT]) {
+        if(button_down[SDLK_SPACE]) {
+            foo_consts_id ^= 1;
+        }
+        else if(button_down[SDLK_LEFT]) {
             iso_ct = std::max(iso_ct-1, 2);
         }
         else if(button_down[SDLK_RIGHT]) {
