@@ -185,12 +185,12 @@ int main() try
 
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void*)(3*4));
-    glBufferData(GL_ARRAY_BUFFER, cow.vertices.size() * sizeof(obj_data::vertex), cow.vertices.data(), GL_STREAM_DRAW);
+    //glBufferData(GL_ARRAY_BUFFER, cow.vertices.size() * sizeof(obj_data::vertex), cow.vertices.data(), GL_STREAM_DRAW);
             //////////////////////////////////////////////////////////////////////////////////////////////////////////////
             // task2
             glEnableVertexAttribArray(2);
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void*)(3*4+3*4));
-            glBufferData(GL_ARRAY_BUFFER, cow.vertices.size() * sizeof(obj_data::vertex), cow.vertices.data(), GL_STREAM_DRAW);
+            //glBufferData(GL_ARRAY_BUFFER, cow.vertices.size() * sizeof(obj_data::vertex), cow.vertices.data(), GL_STREAM_DRAW);
             //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, cow.indices.size() * sizeof(std::uint32_t), cow.indices.data(), GL_STATIC_DRAW);
@@ -261,6 +261,8 @@ int main() try
     GLuint dt_location = glGetUniformLocation(program, "dt");
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    //glUniform1i(texture_location, 0);
+
     auto last_frame_start = std::chrono::high_resolution_clock::now();
 
     float time = 0.f;
@@ -306,7 +308,7 @@ int main() try
         //////////////////////////////////////////////////////////////////////////////////////////////////////////
         // task 6
         glUseProgram(program);
-        glUniform1f(dt_location, time);
+        //glUniform1f(dt_location, time);
         //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         if (button_down[SDLK_UP]) offset_z -= 4.f * dt;
