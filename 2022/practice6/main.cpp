@@ -71,7 +71,6 @@ uniform vec3 camera_position;
 
 in vec3 normal;
 in vec3 position;
-in float ao;
 
 layout (location = 0) out vec4 out_color;
 
