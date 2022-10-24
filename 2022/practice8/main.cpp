@@ -105,6 +105,70 @@ void main()
 }
 )";
 
+const char debug_vertex_shader_source[] =
+R"(#version 330 core
+
+const vec2 VERTICES[6] = vec2[6](
+	vec2(-1.0, -1.0),
+	vec2(-1.0, -0.5),
+	vec2(-0.5, -0.5),
+    vec2(-0.5, -0.5),
+	vec2(-0.5, -1.0),
+	vec2(-1.0, -1.0)
+);
+
+out vec2 texcoord;
+
+void main()
+{
+    gl_Position = vec4(VERTICES[gl_VertexID], 0.0, 1.0);
+    texcoord = vec2(gl_Position.x, gl_Position.y);
+    texcoord += vec2(1);
+    texcoord *= 2;
+}
+
+)";
+
+const char debug_fragment_shader_source[] =
+R"(#version 330 core
+
+uniform sampler2D sample;
+in vec2 texcoord;
+
+layout (location = 0) out vec4 out_color;
+
+void main() 
+{
+    out_color = vec4(texture2D(sample, texcoord).r);
+}
+
+)";
+
+
+
+const char shadow_vertex_shader_source[] =
+R"(#version 330 core
+
+layout (location = 0) in vec3 in_position;
+
+uniform mat4 model;
+uniform sampler2D sample;
+uniform mat4 shadow_projection;
+
+void main()
+{
+    gl_Position = (shadow_projection * (model * vec4(in_position,1.0)));
+}
+
+)";
+
+const char shadow_fragment_shader_source[] =
+R"(#version 330 core
+
+void main() {}
+
+)";
+
 GLuint create_shader(GLenum type, const char *source)
 {
     GLuint result = glCreateShader(type);
@@ -225,6 +289,47 @@ try
     float camera_distance = 1.5f;
     float camera_angle = glm::pi<float>();
 
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // task1 
+    const int shadow_map_size = 1024;
+
+    GLuint texture;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadow_map_size, shadow_map_size, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST); 
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    GLuint fbo;
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+    glFramebufferTexture(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, texture, 0);
+    
+
+
+    if(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+	    std::cout << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!" << std::endl;
+    
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // task2
+    GLuint debug_vao;
+    glGenVertexArrays(1, &debug_vao);
+
+    auto debug_vertex_shader = create_shader(GL_VERTEX_SHADER, debug_vertex_shader_source);
+    auto debug_fragment_shader = create_shader(GL_FRAGMENT_SHADER, debug_fragment_shader_source);
+    auto debug_program = create_program(debug_vertex_shader, debug_fragment_shader);
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // task3
+    auto shadow_vertex_shader = create_shader(GL_VERTEX_SHADER, shadow_vertex_shader_source);
+    auto shadow_fragment_shader = create_shader(GL_FRAGMENT_SHADER, shadow_fragment_shader_source);
+    auto shadow_program = create_program(shadow_vertex_shader, shadow_fragment_shader);
+    
+    GLuint shadow_shadow_projection_location = glGetUniformLocation(shadow_program, "shadow_projection");
+    GLuint shadow_model_location = glGetUniformLocation(shadow_program, "model");
+    ///////////////////////////////////////////////////////////////////////////////////////
+
     bool running = true;
     while (running)
     {
@@ -269,6 +374,11 @@ try
         if (button_down[SDLK_RIGHT])
             camera_angle -= 2.f * dt;
 
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // task2
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        ///////////////////////////////////////////////////////////////////////////////////////
+
         glViewport(0, 0, width, height);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glClearColor(0.8f, 0.8f, 1.f, 0.f);
@@ -304,8 +414,55 @@ try
         glUniform3f(sun_color_location, 1.f, 1.f, 1.f);
         glUniform3fv(sun_direction_location, 1, reinterpret_cast<float *>(&sun_direction));
 
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // task3
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+        glUseProgram(shadow_program);
+
+        glViewport(0, 0, shadow_map_size, shadow_map_size);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
+
+        glCullFace(GL_FRONT);
+
+        
+        glm::vec3 light_Z = glm::vec3(0, -1, 0);
+        glm::vec3 light_X = glm::vec3(1, 0, 0);
+        glm::vec3 light_Y = glm::cross(light_X, light_Z);
+        glm::mat4 shadow_projection = glm::mat4(glm::transpose(glm::mat3(light_X, light_Y, light_Z)));
+        
+        glUniformMatrix4fv(shadow_shadow_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&shadow_projection));
+        glUniformMatrix4fv(shadow_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
+
         glBindVertexArray(scene_vao);
         glDrawElements(GL_TRIANGLES, scene.indices.size(), GL_UNSIGNED_INT, nullptr);
+       
+        glCullFace(GL_BACK);
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+
+        glUseProgram(program);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glViewport(0, 0, width, height);
+
+        glBindVertexArray(scene_vao);
+        glDrawElements(GL_TRIANGLES, scene.indices.size(), GL_UNSIGNED_INT, nullptr);
+
+
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // task2
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+
+        glUseProgram(debug_program);
+        glBindVertexArray(debug_vao);
+        glBindTexture(GL_TEXTURE_2D, texture);
+
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        ///////////////////////////////////////////////////////////////////////////////////////
 
         SDL_GL_SwapWindow(window);
     }
