@@ -145,8 +145,7 @@ void main()
                 float c = exp(-float(x*x + y*y) / (radius*radius));
 
                 vec2 shift = vec2(x,y); shift /= vec2(textureSize(shadow_map, 0));
-                vec3 ndc = ndc_main + vec3(shift.x,shift.y,0.0);
-                sum += c * texture(shadow_map, ndc * 0.5 + 0.5);
+                sum += c * texture(shadow_map, (ndc_main * 0.5 + 0.5) + vec3(shift.x,shift.y,0.0));
                 sum_w += c;
             }
         }
