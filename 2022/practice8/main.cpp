@@ -145,7 +145,7 @@ void main()
                 float c = exp(-float(x*x + y*y) / (radius*radius));
 
                 vec2 shift = vec2(x,y); shift /= vec2(textureSize(shadow_map, 0));
-                vec3 ndc = (shadow_projection * vec4(position + vec3(shift.x,shift.y,0.0),1.0)).xyz;
+                vec3 ndc = ndc_main + vec3(shift.x,shift.y,0.0);
                 sum += c * texture(shadow_map, ndc * 0.5 + 0.5);
                 sum_w += c;
             }
