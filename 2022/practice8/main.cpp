@@ -500,6 +500,7 @@ try
         // task5
         light_Z = -sun_direction;
         light_X = glm::cross(light_Z, (light_Z == glm::vec3(1.0,0.0,0.0) ? glm::vec3(0.0,1.0,0.0) : glm::vec3(1.0,0.0,0.0)));
+        light_X = glm::normalize(light_X);
         ///////////////////////////////////////////////////////////////////////////////////////
         glm::vec3 light_Y = glm::cross(light_X, light_Z);
 
