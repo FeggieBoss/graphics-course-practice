@@ -131,37 +131,31 @@ void main()
 
 
     // task7
-    vec3 ndc___ = (shadow_projection * vec4(position,1.0)).xyz;
-    if(-1 <= ndc___.x && ndc___.x <= 1 && -1 <= ndc___.y && ndc___.y <= 1) {
+    float sun_shadow_factor = 1.0;
 
-        vec4 sum = vec4(0.0);
+    vec3 ndc_main = (shadow_projection * vec4(position,1.0)).xyz;
+    if(-1 <= ndc_main.x && ndc_main.x <= 1 && -1 <= ndc_main.y && ndc_main.y <= 1) {
+        float sum = 0.0;
         float sum_w = 0.0;
         const int N = 5;
         float radius = 10.0;
+        
         for (int x = -N; x <= N; ++x) {
             for (int y = -N; y <= N; ++y) {
                 float c = exp(-float(x*x + y*y) / (radius*radius));
 
-                vec2 shift = vec2(x,y);
-                shift /= vec2(textureSize(shadow_map, 0));
+                vec2 shift = vec2(x,y); shift /= vec2(textureSize(shadow_map, 0));
                 vec3 ndc = (shadow_projection * vec4(position + vec3(shift.x,shift.y,0.0),1.0)).xyz;
-                if(-1 <= ndc.x && ndc.x <= 1 && -1 <= ndc.y && ndc.y <= 1 && texture(shadow_map, ndc * 0.5 + 0.5) == 0.0) {
-                    sum += c * vec4(albedo * 0.2, 1.0);
-                    sum_w += c;
-                }
-                else {
-                    sum += c * vec4(albedo * 0.2 + sun_color * phong(sun_direction), 1.0);
-                    sum_w += c;
-                }
+                sum += c * texture(shadow_map, ndc * 0.5 + 0.5);
+                sum_w += c;
             }
         }
-        out_color = sum / sum_w;   
+        sun_shadow_factor = sum / sum_w;   
     }
-    else {
-        float ambient_light = 0.2;
-        vec3 color = albedo * ambient_light + sun_color * phong(sun_direction);
-        out_color = vec4(color, 1.0);
-    }
+
+    float ambient_light = 0.2;
+    vec3 color = albedo * ambient_light + sun_shadow_factor * sun_color * phong(sun_direction);
+    out_color = vec4(color, 1.0);
 }
 )";
 
@@ -505,7 +499,7 @@ try
         ///////////////////////////////////////////////////////////////////////////////////////
         // task5
         light_Z = -sun_direction;
-        light_X = glm::vec3(light_Z.y, light_Z.x, light_Z.z);
+        light_X = glm::cross(light_Z, (light_Z == glm::vec3(1.0,0.0,0.0) ? glm::vec3(0.0,1.0,0.0) : glm::vec3(1.0,0.0,0.0)));
         ///////////////////////////////////////////////////////////////////////////////////////
         glm::vec3 light_Y = glm::cross(light_X, light_Z);
 
