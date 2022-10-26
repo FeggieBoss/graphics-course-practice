@@ -97,11 +97,71 @@ vec3 phong(vec3 direction) {
     return diffuse(direction) + specular(direction);
 }
 
+
+uniform mat4 shadow_projection;
+uniform sampler2DShadow shadow_map;
+
 void main()
-{
+{   
+    /*
+    // task5
+    //vec4 ndc = shadow_projection * vec4(position,1.0);
+    
+
+    vec3 ndc = (shadow_projection * vec4(position,1.0)).xyz;
+    if(-1 <= ndc.x && ndc.x <= 1 && -1 <= ndc.y && ndc.y <= 1) {
+        
+
+        // task5
+        //ndc = ndc * 0.5 + 0.5;
+        // (ndc.z > texture2D(shadow_map, ndc.xy).r)     
+
+
+        // task6
+        if (texture(shadow_map, ndc * 0.5 + 0.5) == 0.0) { 
+            out_color = vec4(albedo * 0.2, 1.0);
+            return;
+        }
+    } 
+
     float ambient_light = 0.2;
     vec3 color = albedo * ambient_light + sun_color * phong(sun_direction);
     out_color = vec4(color, 1.0);
+    */
+
+
+    // task7
+    vec3 ndc___ = (shadow_projection * vec4(position,1.0)).xyz;
+    if(-1 <= ndc___.x && ndc___.x <= 1 && -1 <= ndc___.y && ndc___.y <= 1) {
+
+        vec4 sum = vec4(0.0);
+        float sum_w = 0.0;
+        const int N = 5;
+        float radius = 10.0;
+        for (int x = -N; x <= N; ++x) {
+            for (int y = -N; y <= N; ++y) {
+                float c = exp(-float(x*x + y*y) / (radius*radius));
+
+                vec2 shift = vec2(x,y);
+                shift /= vec2(textureSize(shadow_map, 0));
+                vec3 ndc = (shadow_projection * vec4(position + vec3(shift.x,shift.y,0.0),1.0)).xyz;
+                if(-1 <= ndc.x && ndc.x <= 1 && -1 <= ndc.y && ndc.y <= 1 && texture(shadow_map, ndc * 0.5 + 0.5) == 0.0) {
+                    sum += c * vec4(albedo * 0.2, 1.0);
+                    sum_w += c;
+                }
+                else {
+                    sum += c * vec4(albedo * 0.2 + sun_color * phong(sun_direction), 1.0);
+                    sum_w += c;
+                }
+            }
+        }
+        out_color = sum / sum_w;   
+    }
+    else {
+        float ambient_light = 0.2;
+        vec3 color = albedo * ambient_light + sun_color * phong(sun_direction);
+        out_color = vec4(color, 1.0);
+    }
 }
 )";
 
@@ -293,19 +353,26 @@ try
     // task1 
     const int shadow_map_size = 1024;
 
-    GLuint texture;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
+    GLuint shadow_map_texture;
+    glGenTextures(1, &shadow_map_texture);
+    glBindTexture(GL_TEXTURE_2D, shadow_map_texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadow_map_size, shadow_map_size, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST); 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // task6
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR); 
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+    ///////////////////////////////////////////////////////////////////////////////////////
 
     GLuint fbo;
     glGenFramebuffers(1, &fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
-    glFramebufferTexture(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, texture, 0);
+    glFramebufferTexture(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, shadow_map_texture, 0);
     
 
 
@@ -328,6 +395,9 @@ try
     
     GLuint shadow_shadow_projection_location = glGetUniformLocation(shadow_program, "shadow_projection");
     GLuint shadow_model_location = glGetUniformLocation(shadow_program, "model");
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // task4 
+    GLuint shadow_projection_location = glGetUniformLocation(program, "shadow_projection");
     ///////////////////////////////////////////////////////////////////////////////////////
 
     bool running = true;
@@ -415,6 +485,8 @@ try
         glUniform3fv(sun_direction_location, 1, reinterpret_cast<float *>(&sun_direction));
 
 
+
+
         ///////////////////////////////////////////////////////////////////////////////////////
         // task3
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
@@ -430,7 +502,13 @@ try
         
         glm::vec3 light_Z = glm::vec3(0, -1, 0);
         glm::vec3 light_X = glm::vec3(1, 0, 0);
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // task5
+        light_Z = -sun_direction;
+        light_X = glm::vec3(light_Z.y, light_Z.x, light_Z.z);
+        ///////////////////////////////////////////////////////////////////////////////////////
         glm::vec3 light_Y = glm::cross(light_X, light_Z);
+
         glm::mat4 shadow_projection = glm::mat4(glm::transpose(glm::mat3(light_X, light_Y, light_Z)));
         
         glUniformMatrix4fv(shadow_shadow_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&shadow_projection));
@@ -443,12 +521,25 @@ try
         ///////////////////////////////////////////////////////////////////////////////////////
 
 
+
+
+
+
         glUseProgram(program);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
         glViewport(0, 0, width, height);
 
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // task4
+        glBindTexture(GL_TEXTURE_2D, shadow_map_texture); // will work because 'uniform shadow_map' will be zero and it set in zero by default
+        glUniformMatrix4fv(shadow_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&shadow_projection));
+        ///////////////////////////////////////////////////////////////////////////////////////
+
         glBindVertexArray(scene_vao);
         glDrawElements(GL_TRIANGLES, scene.indices.size(), GL_UNSIGNED_INT, nullptr);
+
+
+
 
 
 
@@ -459,7 +550,7 @@ try
 
         glUseProgram(debug_program);
         glBindVertexArray(debug_vao);
-        glBindTexture(GL_TEXTURE_2D, texture);
+        glBindTexture(GL_TEXTURE_2D, shadow_map_texture);
 
         glDrawArrays(GL_TRIANGLES, 0, 6);
         ///////////////////////////////////////////////////////////////////////////////////////
