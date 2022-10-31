@@ -87,14 +87,26 @@ void main()
     shadow_pos /= shadow_pos.w;
     shadow_pos = shadow_pos * 0.5 + vec4(0.5);
 
+    float bias = 0.12;
+
     bool in_shadow_texture = (shadow_pos.x > 0.0) && (shadow_pos.x < 1.0) && (shadow_pos.y > 0.0) && (shadow_pos.y < 1.0) && (shadow_pos.z > 0.0) && (shadow_pos.z < 1.0);
     float shadow_factor = 1.0;
     if (in_shadow_texture)
-        shadow_factor = (texture(shadow_map, shadow_pos.xy).r < shadow_pos.z) ? 0.0 : 1.0;
+        shadow_factor = (bias + texture(shadow_map, shadow_pos.xy).r < shadow_pos.z) ? 0.0 : 1.0;
 
     vec3 albedo = vec3(1.0, 1.0, 1.0);
 
-    vec3 light = ambient;
+    //////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task4
+    vec2 data = texture(shadow_map, shadow_pos.xy).rg;
+    float mu = data.r;
+    float sigma = data.g - mu * mu;
+    float z = shadow_pos.z;
+    float factor = (z < mu) ? 1.0 : sigma / (sigma + (z - mu) * (z - mu));
+    //////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+    vec3 light = factor * ambient;
     light += light_color * max(0.0, dot(normal, light_direction)) * shadow_factor;
     vec3 color = albedo * light;
 
@@ -135,7 +147,7 @@ layout (location = 0) out vec4 out_color;
 
 void main()
 {
-    out_color = vec4(texture(shadow_map, texcoord).rrr, 1.0);
+    out_color = vec4(texture(shadow_map, texcoord).xyz, 1.0);
 }
 )";
 
@@ -156,8 +168,13 @@ void main()
 const char shadow_fragment_shader_source[] =
 R"(#version 330 core
 
+in vec4 gl_FragCoord;
+layout (location = 0) out vec4 z_zz;
+
 void main()
-{}
+{
+    z_zz = vec4(gl_FragCoord.z, gl_FragCoord.z * gl_FragCoord.z, 0.0, 0.0);
+}
 )";
 
 GLuint create_shader(GLenum type, const char * source)
@@ -302,14 +319,32 @@ int main() try
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadow_map_resolution, shadow_map_resolution, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    //glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadow_map_resolution, shadow_map_resolution, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    //////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task3
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, shadow_map_resolution, shadow_map_resolution, 0, GL_RGBA, GL_FLOAT, NULL);
+    //////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
     GLuint shadow_fbo;
     glGenFramebuffers(1, &shadow_fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, shadow_fbo);
-    glFramebufferTexture(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, shadow_map, 0);
+    //glFramebufferTexture(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, shadow_map, 0);
+    glFramebufferTexture(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, shadow_map, 0); // task3
+    
+    
+    //////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task3   
+    GLuint rbo;
+    glGenRenderbuffers(1, &rbo);
+    glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, shadow_map_resolution, shadow_map_resolution);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rbo);
+    //////////////////////////////////////////////////////////////////////////////////////////////////////
+
     if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         throw std::runtime_error("Incomplete framebuffer!");
+
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 
     auto last_frame_start = std::chrono::high_resolution_clock::now();
@@ -323,6 +358,39 @@ int main() try
     float view_azimuth = 0.f;
     float camera_distance = 1.5f;
     bool running = true;
+
+
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task2
+    float min_x = FLT_MAX, max_x = FLT_MIN;
+    float min_y = FLT_MAX, max_y = FLT_MIN;
+    float min_z = FLT_MAX, max_z = FLT_MIN;
+    for(obj_data::vertex el : scene.vertices) {
+        min_x = std::min(min_x, el.position[0]);
+        max_x = std::max(max_x, el.position[0]);
+
+        min_y = std::min(min_y, el.position[1]);
+        max_y = std::max(max_y, el.position[1]);
+
+        min_z = std::min(min_z, el.position[2]);
+        max_z = std::max(max_z, el.position[2]);
+    }
+
+    std::vector<std::vector<float>> v(8, std::vector<float>(3));
+    v = {
+        {min_x, min_y, min_z},
+        {min_x, min_y, max_z},
+        {min_x, max_y, min_z},
+        {min_x, max_y, max_z},
+        {max_x, min_y, min_z},
+        {max_x, min_y, max_z},
+        {max_x, max_y, min_z},
+        {max_x, max_y, max_z},
+    };
+    //////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
     while (running)
     {
         for (SDL_Event event; SDL_PollEvent(&event);) switch (event.type)
@@ -387,6 +455,30 @@ int main() try
         glm::vec3 light_z = -light_direction;
         glm::vec3 light_x = glm::normalize(glm::cross(light_z, {0.f, 1.f, 0.f}));
         glm::vec3 light_y = glm::cross(light_x, light_z);
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        // task2
+        float c_x = (max_x + min_x) / 2;
+        float c_y = (max_y + min_y) / 2;
+        float c_z = (max_z + min_z) / 2;
+        float light_x_mx = FLT_MIN;
+        for(auto &el : v) {
+            light_x_mx = std::max(light_x_mx, std::abs(glm::dot({el[0]-c_x,el[1]-c_y,el[2]-c_z}, light_x)));
+        }
+
+        float light_y_mx = FLT_MIN;
+        for(auto &el : v) {
+            light_y_mx = std::max(light_y_mx, std::abs(glm::dot({el[0]-c_x,el[1]-c_y,el[2]-c_z}, light_y)));
+        }
+
+        float light_z_mx = FLT_MIN;
+        for(auto &el : v) {
+            light_z_mx = std::max(light_z_mx, std::abs(glm::dot({el[0]-c_x,el[1]-c_y,el[2]-c_z}, light_z)));
+        }
+
+        light_x *= light_x_mx;
+        light_y *= light_y_mx;
+        light_z *= light_z_mx;
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
         float shadow_scale = 2.f;
 
         glm::mat4 transform = glm::mat4(1.f);
@@ -396,6 +488,16 @@ int main() try
             transform[i][1] = shadow_scale * light_y[i];
             transform[i][2] = shadow_scale * light_z[i];
         }
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        // task2
+        transform = {
+            {light_x[0], light_y[0], light_z[0], c_x},
+            {light_x[1], light_y[1], light_z[1], c_y},
+            {light_x[2], light_y[2], light_z[2], c_z},
+            {0.0, 0.0, 0.0, 1.0}
+        };
+        transform = glm::inverse(glm::transpose(transform));
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
 
         glUseProgram(shadow_program);
         glUniformMatrix4fv(shadow_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
