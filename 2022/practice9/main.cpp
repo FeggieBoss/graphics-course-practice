@@ -119,11 +119,12 @@ void main()
         }
         vec2 data = sum / sum_w;
         //////////////////////////////////////////////////////////////////////////////////////////////////////
+        float bias2 = -0.005;
 
         float mu = data.r;
         float sigma = data.g - mu * mu;
-        float zz = shadow_pos.z;
-        factor = (zz < mu) ? 1.0 : sigma / (sigma + (zz - mu) * (zz - mu));
+        float z = shadow_pos.z + bias2;
+        factor = (z < mu) ? 1.0 : sigma / (sigma + (z - mu) * (z - mu));
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         // task5
         float delta = 0.125;
@@ -204,9 +205,8 @@ layout (location = 0) out vec4 z_zz;
 
 void main()
 {   
-    float bias2 = -0.005;
     float z = gl_FragCoord.z;
-    z_zz = vec4(z + bias2, z * z + 0.25 * (dFdx(z)*dFdx(z) + dFdy(z)*dFdy(z)), 0.0, 0.0); // task5 
+    z_zz = vec4(z, z * z + 0.25 * (dFdx(z)*dFdx(z) + dFdy(z)*dFdy(z)), 0.0, 0.0); // task5 
 }
 )";
 
