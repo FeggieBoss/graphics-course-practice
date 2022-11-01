@@ -103,7 +103,6 @@ void main()
 
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         // task4
-        float bias2 = -0.005;
         
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         // task6
@@ -124,7 +123,7 @@ void main()
         float mu = data.r;
         float sigma = data.g - mu * mu;
         float zz = shadow_pos.z;
-        factor = (bias2 + zz < mu) ? 1.0 : sigma / (sigma + (zz - mu) * (zz - mu));
+        factor = (zz < mu) ? 1.0 : sigma / (sigma + (zz - mu) * (zz - mu));
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         // task5
         float delta = 0.125;
@@ -205,8 +204,9 @@ layout (location = 0) out vec4 z_zz;
 
 void main()
 {   
+    float bias2 = -0.005;
     float z = gl_FragCoord.z;
-    z_zz = vec4(z, z * z + 0.25 * (dFdx(z)*dFdx(z) + dFdy(z)*dFdy(z)), 0.0, 0.0); // task5 
+    z_zz = vec4(z + bias2, z * z + 0.25 * (dFdx(z)*dFdx(z) + dFdy(z)*dFdy(z)), 0.0, 0.0); // task5 
 }
 )";
 
@@ -348,8 +348,13 @@ int main() try
     GLuint shadow_map;
     glGenTextures(1, &shadow_map);
     glBindTexture(GL_TEXTURE_2D, shadow_map);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    // glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    // glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // линейная фильтрация
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     //glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadow_map_resolution, shadow_map_resolution, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
@@ -396,9 +401,10 @@ int main() try
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////
     // task2
-    float min_x = FLT_MAX, max_x = FLT_MIN;
-    float min_y = FLT_MAX, max_y = FLT_MIN;
-    float min_z = FLT_MAX, max_z = FLT_MIN;
+    float infty = std::numeric_limits<float>::infinity();
+    float min_x = infty, max_x = -infty;
+    float min_y = infty, max_y = -infty;
+    float min_z = infty, max_z = -infty;
     for(obj_data::vertex el : scene.vertices) {
         min_x = std::min(min_x, el.position[0]);
         max_x = std::max(max_x, el.position[0]);
