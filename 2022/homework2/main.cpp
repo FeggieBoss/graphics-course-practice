@@ -151,21 +151,28 @@ uniform mat4 transform;
 
 layout (location = 0) in vec3 in_position;
 
+out vec2 texcoord;
+
 void main()
 {
     gl_Position = transform * model * vec4(in_position, 1.0);
+    texcoord = vec2(in_position.x, 1.f-in_position.y);
 }
 )";
 
 const char shadow_fragment_shader_source[] =
 R"(#version 330 core
+uniform sampler2D map_d;
 
 in vec4 gl_FragCoord;
+in vec2 texcoord;
 
 layout (location = 0) out vec4 z_zz;
 
 void main()
-{ 
+{   
+    if(texture2D(map_d, texcoord).x > 0.5) discard;
+
     float z = gl_FragCoord.z;
     z_zz = vec4(z, z * z + 0.25 * (dFdx(z)*dFdx(z) + dFdy(z)*dFdy(z)), 0.0, 0.0);
 }
@@ -273,6 +280,15 @@ int main() try
     GLuint texture_location = glGetUniformLocation(program, "texture");
     GLuint glossiness_location = glGetUniformLocation(program, "glossiness");
     GLuint shininess_location = glGetUniformLocation(program, "shininess");
+    GLuint map_d_location = glGetUniformLocation(program, "map_d");
+
+
+
+
+
+
+
+
 
 
 
@@ -286,6 +302,7 @@ int main() try
 
     GLuint shadow_model_location = glGetUniformLocation(shadow_program, "model");
     GLuint shadow_transform_location = glGetUniformLocation(shadow_program, "transform");
+    GLuint shadow_map_d_location = glGetUniformLocation(program, "map_d");
 
 
     
@@ -361,6 +378,12 @@ int main() try
         }
     }
     
+
+
+
+
+
+
 
 
 
@@ -465,6 +488,7 @@ int main() try
 
 
 
+
     int last_textrue_location_id = 1; // 0/1 will be free
     std::map<std::string, int> texture_pos;
 
@@ -473,7 +497,6 @@ int main() try
         int id = shapes[s].mesh.material_ids[0];
         std::string ambient_texname = materials[id].ambient_texname;
 
-        if(ambient_texname.empty()) continue;
         if(texture_pos.find(ambient_texname)!=texture_pos.end()) continue;
         texture_pos[ambient_texname] = ++last_textrue_location_id;
 
@@ -488,6 +511,35 @@ int main() try
         
         for(char &c : ambient_texname) if(c=='\\') c='/';
         std::string path = project_root + "/" + ambient_texname;
+        unsigned char* pixels_texture = stbi_load(path.c_str(), &texture_width, &texture_height, &texture_nrChannels, 4);
+                    
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, texture_width, texture_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels_texture);
+
+        glGenerateMipmap(GL_TEXTURE_2D);
+
+        stbi_image_free(pixels_texture);        
+    }
+
+
+    std::map<std::string, int> map_d_pos;
+    for (size_t s = 0; s < shapes.size(); s++) {
+        int id = shapes[s].mesh.material_ids[0];
+        std::string alpha_texname = materials[id].alpha_texname;
+
+        if(map_d_pos.find(alpha_texname)!=map_d_pos.end()) continue;
+        map_d_pos[alpha_texname] = ++last_textrue_location_id;
+
+        GLuint textureID=0;
+        glGenTextures(1, &textureID);
+        glActiveTexture(GL_TEXTURE0 + last_textrue_location_id);
+        glBindTexture(GL_TEXTURE_2D, textureID);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        int texture_width, texture_height, texture_nrChannels;
+        
+        for(char &c : alpha_texname) if(c=='\\') c='/';
+        std::string path = project_root + "/" + alpha_texname;
         unsigned char* pixels_texture = stbi_load(path.c_str(), &texture_width, &texture_height, &texture_nrChannels, 4);
                     
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, texture_width, texture_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels_texture);
@@ -730,7 +782,17 @@ int main() try
         glUseProgram(shadow_program);
         glUniformMatrix4fv(shadow_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
         glUniformMatrix4fv(shadow_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
-        glDrawArrays(GL_TRIANGLES, 0, (GLint)scene.vertices.size());
+        
+        int first = 0;
+        for (size_t s = 0; s < shapes.size(); s++) {
+            int id = shapes[s].mesh.material_ids[0];
+            std::string alpha_texname = materials[id].alpha_texname;
+
+            glUniform1i(shadow_map_d_location, map_d_pos[alpha_texname]);
+
+            glDrawArrays(GL_TRIANGLES, first, (GLint)shapes[s].mesh.indices.size());
+            first += shapes[s].mesh.indices.size();
+        }
 
 
 
@@ -802,12 +864,10 @@ int main() try
 
 
 
-        int first = 0;
+        first = 0;
         for (size_t s = 0; s < shapes.size(); s++) {
             int id = shapes[s].mesh.material_ids[0];
             std::string ambient_texname = materials[id].ambient_texname;
-            if(ambient_texname.empty()) continue;
-
 
             glUniform1i(texture_location, texture_pos[ambient_texname]);
             glUniform1f(glossiness_location, materials[id].specular[0]);
