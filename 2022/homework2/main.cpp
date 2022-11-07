@@ -79,6 +79,9 @@ uniform mat4 transform;
 uniform sampler2D shadow_map;
 uniform sampler2D texture;
 
+uniform sampler2D map_d;
+uniform int flag_map_d;
+
 in vec3 position;
 in vec3 normal;
 in vec2 texcoord;
@@ -99,6 +102,8 @@ float phong(vec3 direction) {
 
 void main()
 {
+    if(flag_map_d == 1 && texture2D(map_d, texcoord).x < 0.5) discard;
+
     vec4 shadow_pos = transform * vec4(position, 1.0);
     shadow_pos /= shadow_pos.w;
     shadow_pos = shadow_pos * 0.5 + vec4(0.5);
@@ -168,11 +173,13 @@ uniform sampler2D map_d;
 in vec4 gl_FragCoord;
 in vec2 texcoord;
 
+uniform int flag_map_d;
+
 layout (location = 0) out vec4 z_zz;
 
 void main()
 {   
-    if(texture2D(map_d, texcoord).x > 0.5) discard;
+    if(flag_map_d == 1 && texture2D(map_d, texcoord).x < 0.5) discard;
 
     float z = gl_FragCoord.z;
     z_zz = vec4(z, z * z + 0.25 * (dFdx(z)*dFdx(z) + dFdy(z)*dFdy(z)), 0.0, 0.0);
@@ -282,6 +289,7 @@ int main() try
     GLuint glossiness_location = glGetUniformLocation(program, "glossiness");
     GLuint shininess_location = glGetUniformLocation(program, "shininess");
     GLuint map_d_location = glGetUniformLocation(program, "map_d");
+    GLuint flag_map_d_location = glGetUniformLocation(program, "flag_map_d");
 
 
 
@@ -304,6 +312,7 @@ int main() try
     GLuint shadow_model_location = glGetUniformLocation(shadow_program, "model");
     GLuint shadow_transform_location = glGetUniformLocation(shadow_program, "transform");
     GLuint shadow_map_d_location = glGetUniformLocation(shadow_program, "map_d");
+    GLuint shadow_flag_map_d_location = glGetUniformLocation(shadow_program, "flag_map_d");
 
 
     
@@ -790,6 +799,7 @@ int main() try
             std::string alpha_texname = materials[id].alpha_texname;
 
             glUniform1i(shadow_map_d_location, map_d_pos[alpha_texname]);
+            glUniform1i(shadow_flag_map_d_location, !alpha_texname.empty());
 
             glDrawArrays(GL_TRIANGLES, first, (GLint)shapes[s].mesh.indices.size());
             first += shapes[s].mesh.indices.size();
@@ -869,6 +879,10 @@ int main() try
         for (size_t s = 0; s < shapes.size(); s++) {
             int id = shapes[s].mesh.material_ids[0];
             std::string ambient_texname = materials[id].ambient_texname;
+            std::string alpha_texname = materials[id].alpha_texname;
+
+            glUniform1i(map_d_location, map_d_pos[alpha_texname]);
+            glUniform1i(flag_map_d_location, !alpha_texname.empty());
 
             glUniform1i(texture_location, texture_pos[ambient_texname]);
             glUniform1f(glossiness_location, materials[id].specular[0]);
