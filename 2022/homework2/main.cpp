@@ -150,13 +150,14 @@ uniform mat4 model;
 uniform mat4 transform;
 
 layout (location = 0) in vec3 in_position;
+layout (location = 2) in vec2 in_texcoord;
 
 out vec2 texcoord;
 
 void main()
 {
     gl_Position = transform * model * vec4(in_position, 1.0);
-    texcoord = vec2(in_position.x, 1.f-in_position.y);
+    texcoord = vec2(in_texcoord.x, 1.f-in_texcoord.y);
 }
 )";
 
@@ -302,7 +303,7 @@ int main() try
 
     GLuint shadow_model_location = glGetUniformLocation(shadow_program, "model");
     GLuint shadow_transform_location = glGetUniformLocation(shadow_program, "transform");
-    GLuint shadow_map_d_location = glGetUniformLocation(program, "map_d");
+    GLuint shadow_map_d_location = glGetUniformLocation(shadow_program, "map_d");
 
 
     
