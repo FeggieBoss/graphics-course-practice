@@ -116,47 +116,39 @@ void main()
     vec3 view_direction = normalize(camera_position - position);
     vec3 reflected_direction = 2.0 * real_normal * dot(real_normal, view_direction) - view_direction;
     float x = atan(reflected_direction.z, reflected_direction.x) / PI * 0.5 + 0.5;
-    float y = -atan(reflected_direction.y, length(reflected_direction.xz)) / PI * 0.5 + 0.5;
+    float y = -atan(reflected_direction.y, length(reflected_direction.xz)) / PI + 0.5;
     
     vec3 reflec_color = texture(environment_texture,vec2(x,y)).xyz;
     /////////////////////////////////////////////////////////////////////////////////////////
     
     
     out_color = vec4(reflec_color * 0.5, 1.0);
-    // out_color = vec4(x, y, 0.0, 1.0);
     out_color += vec4(lightness * albedo * 0.5, 0.f);
 }
 )";
 
-
+/////////////////////////////////////////////////////////////////////////////////////////
+// task6
 const char background_vertex_shader_source[] =
 R"(#version 330 core
 uniform mat4 view_projection_inverse;
-uniform mat4 model;
 
 const vec2 VERTICES[6] = vec2[6](
 	vec2(-1.0, -1.0),
-	vec2(-1.0, -0.5),
-	vec2(-0.5, -0.5),
-    vec2(-0.5, -0.5),
-	vec2(-0.5, -1.0),
+	vec2(-1.0, 1),
+	vec2(1.0, 1.0),
+    vec2(1.0, 1.0),
+	vec2(1.0, -1.0),
 	vec2(-1.0, -1.0)
 );
-out vec2 texcoord;
 out vec3 position;
 
 void main()
 {
     gl_Position = vec4(VERTICES[gl_VertexID], 0.0, 1.0);
-    texcoord = vec2(gl_Position.x, gl_Position.y);
-    texcoord += vec2(1);
-    texcoord *= 2;
 
     vec4 clip_space = view_projection_inverse * gl_Position;
     position = clip_space.xyz / clip_space.w;
-
-    //tangent = mat3(model) * in_tangent;
-    //normal = mat3(model) * in_normal;
 }
 )";
 
@@ -166,7 +158,6 @@ uniform sampler2D environment_texture;
 
 uniform vec3 camera_position;
 
-in vec2 texcoord;
 in vec3 position;
 
 layout (location = 0) out vec4 out_color;
@@ -176,14 +167,15 @@ const float PI = 3.141592653589793;
 
 void main() 
 {
-    vec3 view_direction = normalize(camera_position - position);
+    vec3 view_direction = position-camera_position;
     
     float x = atan(view_direction.z, view_direction.x) / PI * 0.5 + 0.5;
-    float y = -atan(view_direction.y, length(view_direction.xz)) / PI * 0.5 + 0.5;
+    float y = -atan(view_direction.y, length(view_direction.xz)) / PI + 0.5;
     
     out_color = vec4(texture(environment_texture,vec2(x,y)).xyz, 0.f);
 }
 )";
+/////////////////////////////////////////////////////////////////////////////////////////
 
 GLuint create_shader(GLenum type, const char * source)
 {
@@ -352,8 +344,7 @@ int main() try
     
     GLuint view_projection_inverse_location = glGetUniformLocation(background_program, "view_projection_inverse");
     GLuint background_camera_position_location = glGetUniformLocation(background_program, "camera_position");
-    GLuint background_model_location = glGetUniformLocation(background_program, "model");
-    GLuint background_environment_texture_location = glGetUniformLocation(program, "environment_texture");
+    GLuint background_environment_texture_location = glGetUniformLocation(background_program, "environment_texture");
     /////////////////////////////////////////////////////////////////////////////////////////
 
     GLuint sphere_vao, sphere_vbo, sphere_ebo;
@@ -446,10 +437,7 @@ int main() try
             view_azimuth += 2.f * dt;
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_CULL_FACE);
-
+        
         float near = 0.1f;
         float far = 100.f;
         float top = near;
@@ -468,6 +456,30 @@ int main() try
         glm::vec3 light_direction = glm::normalize(glm::vec3(1.f, 2.f, 3.f));
 
         glm::vec3 camera_position = (glm::inverse(view) * glm::vec4(0.f, 0.f, 0.f, 1.f)).xyz();
+
+
+        
+        /////////////////////////////////////////////////////////////////////////////////////////
+        // task6
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glUseProgram(background_program);
+
+        glm::mat4 view_projection_inverse = glm::inverse(projection * view);
+        glUniformMatrix4fv(view_projection_inverse_location, 1, GL_FALSE, reinterpret_cast<float *>(&view_projection_inverse));
+        glUniform3fv(background_camera_position_location, 1, reinterpret_cast<float *>(&camera_position));
+
+        glUniform1i(background_environment_texture_location, 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, environment_texture);
+
+        glBindVertexArray(background_vao);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        /////////////////////////////////////////////////////////////////////////////////////////
+
+
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
 
         glUseProgram(program);
         glUniformMatrix4fv(model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
@@ -493,25 +505,6 @@ int main() try
 
         glBindVertexArray(sphere_vao);
         glDrawElements(GL_TRIANGLES, sphere_index_count, GL_UNSIGNED_INT, nullptr);
-
-
-
-        /////////////////////////////////////////////////////////////////////////////////////////
-        // task6
-        glUseProgram(background_program);
-
-        glm::mat4 view_projection_inverse = glm::inverse(projection * view);
-        glUniform3fv(view_projection_inverse_location, 1, reinterpret_cast<float *>(&view_projection_inverse));
-        glUniform3fv(background_camera_position_location, 1, reinterpret_cast<float *>(&camera_position));
-        glUniformMatrix4fv(background_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
-
-        glUniform1i(background_environment_texture_location, 2);
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, environment_texture);
-
-        glBindVertexArray(background_vao);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-        /////////////////////////////////////////////////////////////////////////////////////////
 
         SDL_GL_SwapWindow(window);
     }
