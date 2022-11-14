@@ -48,10 +48,14 @@ const char vertex_shader_source[] =
 R"(#version 330 core
 
 layout (location = 0) in vec3 in_position;
+layout (location = 1) in float in_size;
+
+out float size;
 
 void main()
 {
     gl_Position = vec4(in_position, 1.0);
+    size = in_size;
 }
 )";
 
@@ -61,15 +65,31 @@ R"(#version 330 core
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
+uniform vec3 camera_position; // task3
+uniform vec3 velocity; // tsak4
 
 layout (points) in;
-layout (points, max_vertices = 1) out;
+layout (triangle_strip, max_vertices = 4) out;
+
+in float size[]; // task1
+
+out vec2 texcoord; // task2
 
 void main()
 {
     vec3 center = gl_in[0].gl_Position.xyz;
-    gl_Position = projection * view * model * vec4(center, 1.0);
-    EmitVertex();
+    vec3 on_camera = camera_position - center;
+    vec3 x = normalize(cross(on_camera, vec3(0.0, 1.0, 0.0)));
+    vec3 y = normalize(cross(x, on_camera));
+
+    for(int i=1;i>=-1;i-=2) {
+        for(int j=1;j>=-1;j-=2) {
+            gl_Position = projection * view * model * vec4(center + vec3(i*size[0],j*size[0],0.0), 1.0);
+            gl_Position = projection * view * model * vec4(center + x*i*size[0] + y*j*size[0], 1.0); // task3
+            texcoord = gl_Position.xy * 0.5 + vec2(0.5);
+            EmitVertex();
+        }
+    }
     EndPrimitive();
 }
 
@@ -80,9 +100,12 @@ R"(#version 330 core
 
 layout (location = 0) out vec4 out_color;
 
+in vec2 texcoord; // task2
+
 void main()
 {
     out_color = vec4(1.0, 0.0, 0.0, 1.0);
+    out_color = vec4(texcoord, 0.0, 1.0); // task2
 }
 )";
 
@@ -128,6 +151,13 @@ GLuint create_program(Shaders ... shaders)
 struct particle
 {
     glm::vec3 position;
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task1
+    float size = float(std::chrono::system_clock::now().time_since_epoch().count()%21)/100 + 0.2;
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task4 
+    glm::vec3 velocity = glm::normalize(glm::vec3(float(std::chrono::system_clock::now().time_since_epoch().count()%101)/100, float(std::chrono::system_clock::now().time_since_epoch().count()%101)/100, float(std::chrono::system_clock::now().time_since_epoch().count()%101)/100));
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 };
 
 int main() try
@@ -197,6 +227,8 @@ int main() try
 
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(particle), (void*)(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(particle), (void*)(12)); // task3
 
     const std::string project_root = PROJECT_ROOT;
     const std::string particle_texture_path = project_root + "/particle.png";
@@ -287,10 +319,10 @@ int main() try
         glUniformMatrix4fv(model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
         glUniformMatrix4fv(view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
         glUniformMatrix4fv(projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
-        glUniform4fv(camera_position_location, 1, reinterpret_cast<float *>(&camera_position));
+        glUniform3fv(camera_position_location, 1, reinterpret_cast<float *>(&camera_position));
 
         glBindVertexArray(vao);
-        glDrawArrays(GL_POINTS, 0, particles.size());
+        glDrawArrays(GL_POINTS, 0, 4*particles.size());
 
         SDL_GL_SwapWindow(window);
     }
