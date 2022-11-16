@@ -102,7 +102,6 @@ void main()
 
             //gl_Position = projection * view * model * vec4(center + x*i*size[0] + y*j*size[0], 1.0); // task3
             gl_Position = projection * view * model * vec4(center + x*i*size[0] + y*j*size[0], 1.0);
-            gl_Position += vec4(position[0], 0.f);
 
             texcoord = vec2(i,j);
             texcoord = vec2(0.5) + texcoord*0.5;
