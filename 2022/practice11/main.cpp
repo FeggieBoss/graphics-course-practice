@@ -49,13 +49,18 @@ R"(#version 330 core
 
 layout (location = 0) in vec3 in_position;
 layout (location = 1) in float in_size;
+layout (location = 2) in float in_rotation;
 
 out float size;
+out float rotation;
+out vec3 position;
 
 void main()
 {
     gl_Position = vec4(in_position, 1.0);
     size = in_size;
+    rotation = in_rotation;   
+    position = in_position;
 }
 )";
 
@@ -66,12 +71,14 @@ uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 uniform vec3 camera_position; // task3
-uniform vec3 velocity; // tsak4
+uniform float time; // task4
 
 layout (points) in;
 layout (triangle_strip, max_vertices = 4) out;
 
 in float size[]; // task1
+in float rotation[]; // task5
+in vec3 position[]; // task5
 
 out vec2 texcoord; // task2
 
@@ -82,11 +89,24 @@ void main()
     vec3 x = normalize(cross(on_camera, vec3(0.0, 1.0, 0.0)));
     vec3 y = normalize(cross(x, on_camera));
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task5
+    vec3 dop = x;
+    x = x * cos(rotation[0]) + y * sin(rotation[0]);
+    y = -dop * sin(rotation[0]) + y * cos(rotation[0]);
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
     for(int i=1;i>=-1;i-=2) {
         for(int j=1;j>=-1;j-=2) {
-            gl_Position = projection * view * model * vec4(center + vec3(i*size[0],j*size[0],0.0), 1.0);
-            gl_Position = projection * view * model * vec4(center + x*i*size[0] + y*j*size[0], 1.0); // task3
-            texcoord = gl_Position.xy * 0.5 + vec2(0.5);
+            //gl_Position = projection * view * model * vec4(center + vec3(i*size[0],j*size[0],0.0), 1.0);
+
+            //gl_Position = projection * view * model * vec4(center + x*i*size[0] + y*j*size[0], 1.0); // task3
+            gl_Position = projection * view * model * vec4(center + x*i*size[0] + y*j*size[0], 1.0);
+            gl_Position += vec4(position[0], 0.f);
+
+            texcoord = vec2(i,j);
+            texcoord = vec2(0.5) + texcoord*0.5;
+
             EmitVertex();
         }
     }
@@ -101,15 +121,19 @@ R"(#version 330 core
 layout (location = 0) out vec4 out_color;
 
 in vec2 texcoord; // task2
+uniform sampler2D particle; // task7
+uniform sampler1D color_texture; // task8
 
 void main()
 {
     out_color = vec4(1.0, 0.0, 0.0, 1.0);
     out_color = vec4(texcoord, 0.0, 1.0); // task2
+    out_color = vec4(texcoord, 0.0, texture(particle, texcoord).r); // task7
+    out_color = vec4(texture(color_texture, texture(particle, texcoord).r).rgb, texture(particle, texcoord).r); // task8
 }
 )";
 
-GLuint create_shader(GLenum type, const char * source)
+GLuint create_shader(GLenum type, const char* source)
 {
     GLuint result = glCreateShader(type);
     glShaderSource(result, 1, &source, nullptr);
@@ -153,12 +177,35 @@ struct particle
     glm::vec3 position;
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // task1
-    float size = float(std::chrono::system_clock::now().time_since_epoch().count()%21)/100 + 0.2;
+    float size = float(std::chrono::system_clock::now().time_since_epoch().count()%21)/100 + 0.17;
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task5
+    float rotation = 0.f;
+    float angular_velocity = float(std::chrono::system_clock::now().time_since_epoch().count()%81)/100 + 0.1;
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // task4 
-    glm::vec3 velocity = glm::normalize(glm::vec3(float(std::chrono::system_clock::now().time_since_epoch().count()%101)/100, float(std::chrono::system_clock::now().time_since_epoch().count()%101)/100, float(std::chrono::system_clock::now().time_since_epoch().count()%101)/100));
+    glm::vec3 velocity = {0.f, 0.f, 0.f};
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 };
+
+GLuint load_texture(std::string const& path)
+{
+    int width, height, channels;
+    auto pixels = stbi_load(path.data(), &width, &height, &channels, 4);
+
+    GLuint result;
+    glGenTextures(1, &result);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, result);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    stbi_image_free(pixels);
+
+    return result;
+}
 
 int main() try
 {
@@ -207,16 +254,21 @@ int main() try
     GLuint view_location = glGetUniformLocation(program, "view");
     GLuint projection_location = glGetUniformLocation(program, "projection");
     GLuint camera_position_location = glGetUniformLocation(program, "camera_position");
+    GLuint time_location = glGetUniformLocation(program, "time");
+    GLuint velocity_location = glGetUniformLocation(program, "velocity");
+    GLuint color_texture_location = glGetUniformLocation(program, "color_texture");
+    GLuint particle_location = glGetUniformLocation(program, "particle");
 
     std::default_random_engine rng;
 
-    std::vector<particle> particles(256);
-    for (auto & p : particles)
-    {
-        p.position.x = std::uniform_real_distribution<float>{-1.f, 1.f}(rng);
-        p.position.y = 0.f;
-        p.position.z = std::uniform_real_distribution<float>{-1.f, 1.f}(rng);
-    }
+    // std::vector<particle> particles(256);
+    // for (auto & p : particles)
+    // {
+    //     p.position.x = std::uniform_real_distribution<float>{-1.f, 1.f}(rng);
+    //     p.position.y = 0.f;
+    //     p.position.z = std::uniform_real_distribution<float>{-1.f, 1.f}(rng);
+    // }
+    std::vector<particle> particles;
 
     GLuint vao, vbo;
     glGenVertexArrays(1, &vao);
@@ -227,12 +279,36 @@ int main() try
 
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(particle), (void*)(0));
-    glEnableVertexAttribArray(1);
+    glEnableVertexAttribArray(1); // task3
     glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(particle), (void*)(12)); // task3
+    glEnableVertexAttribArray(2); // task5
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(particle), (void*)(16)); // task5
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task7
     const std::string project_root = PROJECT_ROOT;
     const std::string particle_texture_path = project_root + "/particle.png";
+    GLuint texture = load_texture(particle_texture_path);
 
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // task8
+    GLuint colors_texture;
+    glGenTextures(1, &colors_texture);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_1D, colors_texture);
+    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+
+    std::vector<glm::vec4> colors = {
+      {0.f, 0.f, 1.f, 1.f}, // blue
+      {1.f, 0.f, 0.f, 1.f}, // red
+      {1.f, 1.f, 0.f, 1.f}, // yellow
+      {1.f, 1.f, 1.f, 1.f}, // white
+    };
+    glTexImage1D(GL_TEXTURE_1D, 0, GL_RGBA8, colors.size(), 0, GL_RGBA, GL_FLOAT, colors.data());
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     glPointSize(5.f);
 
     auto last_frame_start = std::chrono::high_resolution_clock::now();
@@ -246,6 +322,8 @@ int main() try
     float camera_height = 0.5f;
 
     float camera_rotation = 0.f;
+
+    glm::vec4 velocity = {0.f, 0.f, 0.f, 0.f};
 
     bool paused = false;
 
@@ -282,7 +360,33 @@ int main() try
         auto now = std::chrono::high_resolution_clock::now();
         float dt = std::chrono::duration_cast<std::chrono::duration<float>>(now - last_frame_start).count();
         last_frame_start = now;
-        time += dt;
+        if(!paused) {
+            time += dt;
+            
+            ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+            // task6
+            const float A = 0.5;
+            const float C = 0.1;
+            const float D = 0.6;
+
+            while(!particles.empty() && particles.back().size < 0.05) particles.pop_back();
+            if(particles.size()<1024) {
+                particles.push_back(particle());
+
+                particles.back().position.x = std::uniform_real_distribution<float>{-0.05, 0.05}(rng);
+                particles.back().position.y = 0.f;
+                particles.back().position.z = std::uniform_real_distribution<float>{-0.05, 0.05}(rng);
+            }
+            sort(particles.begin(),particles.end(), [](auto &a, auto &b) {return a.size > b.size;});
+
+            for(auto &p : particles) {
+                p.size *= exp(-D * dt);
+                p.velocity += glm::vec3(0.f, A * dt, 0.f) * std::exp(-C * dt);
+                p.position += p.velocity * dt;
+                p.rotation += p.angular_velocity * dt;
+            }
+            ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        }
 
         if (button_down[SDLK_UP])
             camera_distance -= 3.f * dt;
@@ -295,8 +399,9 @@ int main() try
             camera_rotation += 3.f * dt;
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glEnable(GL_DEPTH_TEST);
-
+        //glEnable(GL_DEPTH_TEST);
+        glDisable(GL_DEPTH_TEST); // task8
+ 
         float near = 0.1f;
         float far = 100.f;
 
@@ -311,6 +416,8 @@ int main() try
 
         glm::vec3 camera_position = (glm::inverse(view) * glm::vec4(0.f, 0.f, 0.f, 1.f)).xyz();
 
+        velocity.y += dt; // task4
+
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferData(GL_ARRAY_BUFFER, particles.size() * sizeof(particle), particles.data(), GL_STATIC_DRAW);
 
@@ -320,6 +427,10 @@ int main() try
         glUniformMatrix4fv(view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
         glUniformMatrix4fv(projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
         glUniform3fv(camera_position_location, 1, reinterpret_cast<float *>(&camera_position));
+        glUniform4fv(velocity_location, 1, reinterpret_cast<float *>(&velocity));
+        glUniform1f(time_location, time);
+        glUniform1i(color_texture_location, 1);
+        glUniform1i(particle_location, 0);
 
         glBindVertexArray(vao);
         glDrawArrays(GL_POINTS, 0, 4*particles.size());
