@@ -117,7 +117,7 @@ in vec3 position;
 // task3
 float read_texture(vec3 p) {
     vec3 fix_p = (p - bbox_min) / (bbox_max - bbox_min);
-    return texture3D(cloud, fix_p).r;
+    return texture(cloud, fix_p).r;
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -125,7 +125,7 @@ void main()
 {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // task1
-    vec3 direction_from_camera = position-camera_position;
+    vec3 direction_from_camera = normalize(position-camera_position);
     vec2 tmin_tmax = intersect_bbox(camera_position, direction_from_camera);
     float tmin = tmin_tmax.x;
     float tmax = tmin_tmax.y;
@@ -217,7 +217,7 @@ void main()
 
         color += v_light_color * exp(-v_light_optical_depth) * exp(-v_optical_depth) * dt * read_texture(p) * v_scattering / 4.0 / PI;
     }
-    vec3 v_opacity = vec3(1.0 - exp(-v_optical_depth.x),1.0 - exp(-v_optical_depth.y),1.0 - exp(-v_optical_depth.z));
+    vec3 v_opacity = 1.0 - exp(-v_optical_depth);
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     out_color = vec4(1.0, 0.5, 0.5, 1.0);
