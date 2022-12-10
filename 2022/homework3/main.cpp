@@ -357,16 +357,28 @@ int main() try
     GLuint albedo_texture = load_texture(project_root + "/textures/brick_albedo.jpg");
     GLuint normal_texture = load_texture(project_root + "/textures/brick_normal.jpg");
     GLuint environment_texture = load_texture(project_root + "/textures/environment_map.jpg");
+
     
+    
+
     auto last_frame_start = std::chrono::high_resolution_clock::now();
-
     float time = 0.f;
-
+    bool paused = false;
     std::map<SDL_Keycode, bool> button_down;
+    glm::vec3 cameraPos   = glm::vec3(0.0f, 0.0f,  3.0f);
+    glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
+    glm::vec3 cameraUp    = glm::vec3(0.0f, 1.0f,  0.0f);
+    glm::vec3 direction;
+    float yaw = -90.f, pitch = 0.f;
+    const float cameraMovementSpeed = 0.05f;
+    const float cameraRotationSpeed = 50.f;
 
-    float view_elevation = glm::radians(30.f);
-    float view_azimuth = 0.f;
-    float camera_distance = 2.f;
+
+
+
+
+
+
 
     bool running = true;
     while (running)
@@ -401,15 +413,52 @@ int main() try
         last_frame_start = now;
         time += dt;
 
-        if (button_down[SDLK_UP])
-            camera_distance -= 4.f * dt;
-        if (button_down[SDLK_DOWN])
-            camera_distance += 4.f * dt;
+        
+        
+
+
+
+
+
 
         if (button_down[SDLK_LEFT])
-            view_azimuth -= 2.f * dt;
+            yaw -= cameraRotationSpeed * dt;
         if (button_down[SDLK_RIGHT])
-            view_azimuth += 2.f * dt;
+            yaw += cameraRotationSpeed * dt;
+        if (button_down[SDLK_UP])
+            pitch += cameraRotationSpeed * dt;
+        if (button_down[SDLK_DOWN])
+            pitch -= cameraRotationSpeed * dt;
+
+        if(pitch > 89.0f)
+            pitch =  89.0f;
+        if(pitch < -89.0f)
+            pitch = -89.0f;
+
+        direction.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+        direction.y = sin(glm::radians(pitch));
+        direction.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+        cameraFront = glm::normalize(direction);
+
+        if (button_down[SDLK_a])
+            cameraPos -= glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraMovementSpeed;
+        if (button_down[SDLK_d])
+            cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraMovementSpeed;
+        if (button_down[SDLK_w])
+            cameraPos += cameraMovementSpeed * cameraFront;
+        if (button_down[SDLK_s])
+            cameraPos -= cameraMovementSpeed * cameraFront;
+
+
+
+
+
+
+
+
+
+
+
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         
@@ -420,10 +469,10 @@ int main() try
 
         glm::mat4 model = glm::rotate(glm::mat4(1.f), time * 0.1f, {0.f, 1.f, 0.f});
 
-        glm::mat4 view(1.f);
-        view = glm::translate(view, {0.f, 0.f, -camera_distance});
-        view = glm::rotate(view, view_elevation, {1.f, 0.f, 0.f});
-        view = glm::rotate(view, view_azimuth, {0.f, 1.f, 0.f});
+
+
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
+
 
         glm::mat4 projection = glm::mat4(1.f);
         projection = glm::perspective(glm::pi<float>() / 2.f, (1.f * width) / height, near, far);
