@@ -55,7 +55,6 @@ layout (location = 2) in vec3 in_normal;
 layout (location = 3) in vec2 in_texcoord;
 
 out vec3 position;
-out vec3 tangent;
 out vec3 normal;
 out vec2 texcoord;
 
@@ -63,8 +62,7 @@ void main()
 {
     position = (model * vec4(in_position, 1.0)).xyz;
     gl_Position = projection * view * vec4(position, 1.0);
-    tangent = mat3(model) * in_tangent;
-    normal = mat3(model) * in_normal;
+    normal = normalize(mat3(model) * in_normal);
     texcoord = in_texcoord;
 }
 )";
@@ -75,37 +73,36 @@ R"(#version 330 core
 uniform vec3 light_direction;
 uniform vec3 camera_position;
 
-uniform sampler2D albedo_texture;
+
+uniform sampler2D snow_texture;
 uniform sampler2D normal_texture;
 uniform sampler2D environment_texture;
 
 in vec3 position;
-in vec3 tangent;
 in vec3 normal;
 in vec2 texcoord;
 
 layout (location = 0) out vec4 out_color;
 
-const float PI = 3.141592653589793;
+const float PI = acos(-1.f);
 
 void main()
 {
     float ambient_light = 0.2;
 
-    vec3 bitangent = cross(tangent, normal);
-    mat3 tbn = mat3(tangent, bitangent, normal);
-    vec3 real_normal = tbn * (texture(normal_texture, texcoord).xyz * 2.0 - vec3(1.0));
-    vec3 albedo = texture(albedo_texture, texcoord).rgb;
-    float lightness = ambient_light + max(0.0, dot(normalize(real_normal), light_direction));
-    vec3 view_direction = normalize(camera_position - position);
-    vec3 reflected_direction = 2.0 * real_normal * dot(real_normal, view_direction) - view_direction;
+    vec3 camera_direction = normalize(position - camera_position);
+    float cos_theta = abs(dot(normal, camera_direction));
+    float n = 3.5f;
+    float R0 = pow((1-n)/(1+n), 2.f);
+    float R = R0 + (1-R0)*pow(1-cos_theta, 5.f);
+
+    vec3 reflected_direction = reflect(camera_direction, normal);
+    float lightness = ambient_light + max(0.0, dot(normal, light_direction));
     float x = atan(reflected_direction.z, reflected_direction.x) / PI * 0.5 + 0.5;
     float y = -atan(reflected_direction.y, length(reflected_direction.xz)) / PI + 0.5;
     vec3 reflec_color = texture(environment_texture,vec2(x,y)).xyz;
-    
-    
-    out_color = vec4(reflec_color * 0.5, 1.0);
-    out_color += vec4(lightness * albedo * 0.5, 0.f);
+
+    out_color = vec4(lightness * reflec_color, R);
 }
 )";
 
@@ -148,12 +145,41 @@ const float PI = 3.141592653589793;
 
 void main() 
 {
+    float ambient_light = 0.9;
+
     vec3 view_direction = position-camera_position;
     
     float x = atan(view_direction.z, view_direction.x) / PI * 0.5 + 0.5;
     float y = -atan(view_direction.y, length(view_direction.xz)) / PI + 0.5;
     
-    out_color = vec4(texture(environment_texture,vec2(x,y)).xyz, 0.f);
+    out_color = vec4(ambient_light * texture(environment_texture,vec2(x,y)).xyz, 0.f);
+}
+)";
+
+
+const char floor_vertex_shader_source[] =
+R"(#version 330 core
+
+out vec3 position;
+
+void main()
+{
+    gl_Position = vec4(VERTICES[gl_VertexID], 0.0, 1.0);
+    position = clip_space.xyz / clip_space.w;
+}
+)";
+
+const char floor_fragment_shader_source[] =
+R"(#version 330 core
+uniform vec3 camera_position;
+
+in vec3 position;
+
+layout (location = 0) out vec4 out_color;
+
+void main() 
+{
+    out_color = vec4(0.f);
 }
 )";
 
@@ -309,8 +335,8 @@ int main() try
     GLuint projection_location = glGetUniformLocation(program, "projection");
     GLuint light_direction_location = glGetUniformLocation(program, "light_direction");
     GLuint camera_position_location = glGetUniformLocation(program, "camera_position");
-    GLuint albedo_texture_location = glGetUniformLocation(program, "albedo_texture");
     GLuint normal_texture_location = glGetUniformLocation(program, "normal_texture");
+    GLuint snow_texture_location = glGetUniformLocation(program, "snow_texture");
     GLuint environment_texture_location = glGetUniformLocation(program, "environment_texture");
 
 
@@ -354,8 +380,8 @@ int main() try
     glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void *)offsetof(vertex, texcoords));
 
     std::string project_root = PROJECT_ROOT;
-    GLuint albedo_texture = load_texture(project_root + "/textures/brick_albedo.jpg");
-    GLuint normal_texture = load_texture(project_root + "/textures/brick_normal.jpg");
+    GLuint normal_texture = load_texture(project_root + "/textures/sphere_normal.jpg");
+    GLuint snow_texture = load_texture(project_root + "/textures/snow_texture.jpeg");
     GLuint environment_texture = load_texture(project_root + "/textures/environment_map.jpg");
 
     
@@ -372,10 +398,6 @@ int main() try
     float yaw = -90.f, pitch = 0.f;
     const float cameraMovementSpeed = 0.05f;
     const float cameraRotationSpeed = 50.f;
-
-
-
-
 
 
 
@@ -399,6 +421,10 @@ int main() try
             break;
         case SDL_KEYDOWN:
             button_down[event.key.keysym.sym] = true;
+
+            if (event.key.keysym.sym == SDLK_SPACE)
+                paused = !paused;
+
             break;
         case SDL_KEYUP:
             button_down[event.key.keysym.sym] = false;
@@ -411,7 +437,7 @@ int main() try
         auto now = std::chrono::high_resolution_clock::now();
         float dt = std::chrono::duration_cast<std::chrono::duration<float>>(now - last_frame_start).count();
         last_frame_start = now;
-        time += dt;
+        time += !paused * dt;
 
         
         
@@ -462,7 +488,7 @@ int main() try
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         
-        float near = 0.1f;
+        float near = 0.01f;
         float far = 100.f;
         float top = near;
         float right = (top * width) / height;
@@ -477,13 +503,15 @@ int main() try
         glm::mat4 projection = glm::mat4(1.f);
         projection = glm::perspective(glm::pi<float>() / 2.f, (1.f * width) / height, near, far);
 
-        glm::vec3 light_direction = glm::normalize(glm::vec3(1.f, 2.f, 3.f));
+
+        glm::vec3 light_direction = glm::normalize(glm::vec3(std::sin(time * 0.5f) * 3, 2.f, std::cos(time * 0.5f) * 3 ));
 
         glm::vec3 camera_position = (glm::inverse(view) * glm::vec4(0.f, 0.f, 0.f, 1.f)).xyz();
 
 
         
         glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
         glDisable(GL_CULL_FACE);
         glUseProgram(background_program);
 
@@ -501,7 +529,10 @@ int main() try
         
 
         glEnable(GL_DEPTH_TEST);
-        glEnable(GL_CULL_FACE);
+        glEnable(GL_BLEND); 
+        glDisable(GL_CULL_FACE);
+        glBlendEquation(GL_FUNC_ADD);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         glUseProgram(program);
         glUniformMatrix4fv(model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
@@ -509,19 +540,19 @@ int main() try
         glUniformMatrix4fv(projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
         glUniform3fv(light_direction_location, 1, reinterpret_cast<float *>(&light_direction));
         glUniform3fv(camera_position_location, 1, reinterpret_cast<float *>(&camera_position));
-        glUniform1i(albedo_texture_location, 0);
         
+        glUniform1i(snow_texture_location, 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, snow_texture);
 
         glUniform1i(normal_texture_location, 1);
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, normal_texture);
+
         glUniform1i(environment_texture_location, 2);
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, environment_texture);
-
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, albedo_texture);
-
+        
         glBindVertexArray(sphere_vao);
         glDrawElements(GL_TRIANGLES, sphere_index_count, GL_UNSIGNED_INT, nullptr);
 
