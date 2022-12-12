@@ -28,6 +28,7 @@
 #include <glm/gtx/string_cast.hpp>
 
 #include "obj_parser.hpp"
+#include "gltf_loader.hpp"
 #include "stb_image.h"
 
 std::string to_string(std::string_view str)
@@ -343,6 +344,75 @@ void main()
 }
 )";
 
+const char wolf_vertex_shader_source[] =
+    R"(#version 330 core
+
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+uniform mat4x3 bones[64]; // task2
+
+layout (location = 0) in vec3 in_position;
+layout (location = 1) in vec3 in_normal;
+layout (location = 2) in vec2 in_texcoord;
+layout (location = 3) in ivec4 in_joints; // task1
+layout (location = 4) in vec4 in_weights; // task1
+
+
+out vec3 normal;
+out vec2 texcoord;
+out vec4 weights; // task1
+
+void main()
+{
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// 
+    // task2
+    mat4x3 average = mat4x3(0);
+    average += bones[in_joints.x] * in_weights.x;
+    average += bones[in_joints.y] * in_weights.y;
+    average += bones[in_joints.z] * in_weights.z;
+    average += bones[in_joints.w] * in_weights.w;
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    gl_Position = projection * view * model * mat4(average) * vec4(in_position, 1.0);
+    normal = mat3(model) * mat3(average) * in_normal;
+    texcoord = in_texcoord;
+    weights = in_weights; // task1
+}
+)";
+
+const char wolf_fragment_shader_source[] =
+    R"(#version 330 core
+
+uniform sampler2D albedo;
+uniform vec4 color;
+uniform int use_texture;
+
+uniform vec3 light_direction;
+
+layout (location = 0) out vec4 out_color;
+
+in vec3 normal;
+in vec2 texcoord;
+in vec4 weights; // task1
+
+void main()
+{
+    vec4 albedo_color;
+
+    if (use_texture == 1)
+        albedo_color = texture(albedo, texcoord);
+    else
+        albedo_color = color;
+
+    float ambient = 0.4;
+    float diffuse = max(0.0, dot(normalize(normal), light_direction));
+
+    out_color = vec4(albedo_color.rgb * (ambient + diffuse), albedo_color.a);
+    //out_color = weights; // task1
+}
+)";
+
 const char shadow_vertex_shader_source[] =
     R"(#version 330 core
 uniform mat4 model;
@@ -615,6 +685,19 @@ try
     glGenBuffers(1, &floor_vbo);
     glGenBuffers(1, &floor_ebo);
 
+    auto wolf_vertex_shader = create_shader(GL_VERTEX_SHADER, wolf_vertex_shader_source);
+    auto wolf_fragment_shader = create_shader(GL_FRAGMENT_SHADER, wolf_fragment_shader_source);
+    auto wolf_program = create_program(wolf_vertex_shader, wolf_fragment_shader);
+
+    GLuint wolf_model_location = glGetUniformLocation(wolf_program, "model");
+    GLuint wolf_view_location = glGetUniformLocation(wolf_program, "view");
+    GLuint wolf_projection_location = glGetUniformLocation(wolf_program, "projection");
+    GLuint wolf_albedo_location = glGetUniformLocation(wolf_program, "albedo");
+    GLuint wolf_color_location = glGetUniformLocation(wolf_program, "color");
+    GLuint wolf_use_texture_location = glGetUniformLocation(wolf_program, "use_texture");
+    GLuint wolf_light_direction_location = glGetUniformLocation(wolf_program, "light_direction");
+    GLuint wolf_bones_location = glGetUniformLocation(wolf_program, "bones");
+
     auto floor_vertex_shader = create_shader(GL_VERTEX_SHADER, floor_vertex_shader_source);
     auto floor_fragment_shader = create_shader(GL_FRAGMENT_SHADER, floor_fragment_shader_source);
     auto floor_program = create_program(floor_vertex_shader, floor_fragment_shader);
@@ -710,6 +793,75 @@ try
     GLuint environment_texture = load_texture(project_root + "/textures/environment_map.jpg");
     GLuint watch_tower_texture = load_texture(project_root + "/textures/Wood_Tower_Col.jpg");
     GLuint watch_tower_normal_texture = load_texture(project_root + "/textures/Wood_Tower_Nor.jpg");
+
+    const std::string wolf_model_path = project_root + "/wolf/Wolf-Blender-2.82a.gltf";
+    auto const wolf_input_model = load_gltf(wolf_model_path);
+    GLuint wolf_vbo;
+    glGenBuffers(1, &wolf_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, wolf_vbo);
+    glBufferData(GL_ARRAY_BUFFER, wolf_input_model.buffer.size(), wolf_input_model.buffer.data(), GL_STATIC_DRAW);
+
+    struct mesh
+    {
+        GLuint vao;
+        gltf_model::accessor indices;
+        gltf_model::material material;
+    };
+
+    auto setup_attribute = [](int index, gltf_model::accessor const &accessor, bool integer = false)
+    {
+        glEnableVertexAttribArray(index);
+        if (integer)
+            glVertexAttribIPointer(index, accessor.size, accessor.type, 0, reinterpret_cast<void *>(accessor.view.offset));
+        else
+            glVertexAttribPointer(index, accessor.size, accessor.type, GL_FALSE, 0, reinterpret_cast<void *>(accessor.view.offset));
+    };
+
+    std::vector<mesh> wolf_meshes;
+    for (auto const &mesh : wolf_input_model.meshes)
+    {
+        auto &result = wolf_meshes.emplace_back();
+        glGenVertexArrays(1, &result.vao);
+        glBindVertexArray(result.vao);
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, wolf_vbo);
+        result.indices = mesh.indices;
+
+        setup_attribute(0, mesh.position);
+        setup_attribute(1, mesh.normal);
+        setup_attribute(2, mesh.texcoord);
+        setup_attribute(3, mesh.joints, true);
+        setup_attribute(4, mesh.weights);
+
+        result.material = mesh.material;
+    }
+
+    std::map<std::string, GLuint> wolf_textures;
+    for (auto const &mesh : wolf_meshes)
+    {
+        if (!mesh.material.texture_path)
+            continue;
+        if (wolf_textures.contains(*mesh.material.texture_path))
+            continue;
+
+        auto path = std::filesystem::path(wolf_model_path).parent_path() / *mesh.material.texture_path;
+
+        int width, height, channels;
+        auto data = stbi_load(path.c_str(), &width, &height, &channels, 4);
+        assert(data);
+
+        GLuint texture;
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+
+        stbi_image_free(data);
+
+        wolf_textures[*mesh.material.texture_path] = texture;
+    }
 
     std::string watch_tower_path = project_root + "/textures/watch_tower.obj";
     tinyobj::attrib_t attrib;
@@ -881,6 +1033,9 @@ try
     glm::vec3 ambient = glm::vec3(0.8f, 0.8f, 0.8f);
     glm::vec3 ambient_background = glm::vec3(1.f, 1.f, 1.f);
 
+    float k = 1;
+    const float wolf_speed = 10;
+
     bool running = true;
     while (running)
     {
@@ -969,6 +1124,14 @@ try
             ambient_background = glm::vec3(ambient_, ambient_, ambient_);
         }
 
+        if (button_down[SDLK_LSHIFT])
+            k -= wolf_speed * dt;
+        else
+            k += wolf_speed * dt;
+
+        k = std::max(k, 0.f);
+        k = std::min(k, 1.f);
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         float near = 0.01f;
@@ -1037,6 +1200,7 @@ try
             glDrawArrays(GL_TRIANGLES, 0, 6);
         }
 
+
         {
             glEnable(GL_DEPTH_TEST);
             glDepthFunc(GL_LEQUAL);
@@ -1064,6 +1228,107 @@ try
             glViewport(0, 0, width, height);
 
             glDisable(GL_DEPTH_TEST);
+            glDisable(GL_CULL_FACE);
+        }
+
+        {
+            glEnable(GL_DEPTH_TEST);
+
+            glUseProgram(wolf_program);
+            glUniformMatrix4fv(wolf_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
+            glUniformMatrix4fv(wolf_view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
+            glUniformMatrix4fv(wolf_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
+            glUniform3fv(wolf_light_direction_location, 1, reinterpret_cast<float *>(&light_direction));
+
+            std::vector<glm::mat4x3> bones(wolf_input_model.bones.size());
+            const gltf_model::animation &animation = wolf_input_model.animations.at("01_Run");
+            for (int i = 0; i < wolf_input_model.bones.size(); ++i)
+            {
+                glm::mat4 translation_mt = glm::translate(glm::mat4(1.f), animation.bones[i].translation(std::fmod(time, animation.max_time))); // 0.f)); task4
+                glm::mat4 scale_mt = glm::scale(glm::mat4(1.f), animation.bones[i].scale(std::fmod(time, animation.max_time)));                 // 0.f)); task4
+                glm::mat4 rotation = glm::toMat4(animation.bones[i].rotation(std::fmod(time, animation.max_time)));                             // 0.f)); task4
+                glm::mat4 transform = translation_mt * rotation * scale_mt;
+                if (wolf_input_model.bones[i].parent != -1)
+                {
+                    transform = bones[wolf_input_model.bones[i].parent] * transform;
+                }
+                bones[i] = transform;
+            }
+
+            for (int i = 0; i < wolf_input_model.bones.size(); ++i)
+            {
+                bones[i] = bones[i] * wolf_input_model.bones[i].inverse_bind_matrix;
+            }
+
+            glUniformMatrix4x3fv(wolf_bones_location, wolf_input_model.bones.size(), GL_FALSE, reinterpret_cast<float *>(bones.data()));
+
+            const gltf_model::animation &animation2 = wolf_input_model.animations.at("02_walk");
+            for (int i = 0; i < wolf_input_model.bones.size(); ++i)
+            {
+                glm::vec3 translation_lerp = glm::lerp(animation.bones[i].translation(std::fmod(time, animation.max_time)), animation2.bones[i].translation(std::fmod(time, animation2.max_time)), k);
+                glm::vec3 scale_lerp = glm::lerp(animation.bones[i].scale(std::fmod(time, animation.max_time)), animation2.bones[i].scale(std::fmod(time, animation2.max_time)), k);
+                glm::quat rotation_lerp = glm::slerp(animation.bones[i].rotation(std::fmod(time, animation.max_time)), animation2.bones[i].rotation(std::fmod(time, animation2.max_time)), k);
+
+                glm::mat4 translation_mt = glm::translate(glm::mat4(1.f), translation_lerp);
+                glm::mat4 scale_mt = glm::scale(glm::mat4(1.f), scale_lerp);
+                glm::mat4 rotation = glm::toMat4(rotation_lerp);
+                glm::mat4 transform = translation_mt * rotation * scale_mt;
+                if (wolf_input_model.bones[i].parent != -1)
+                {
+                    transform = bones[wolf_input_model.bones[i].parent] * transform;
+                }
+                bones[i] = transform;
+            }
+
+            for (int i = 0; i < wolf_input_model.bones.size(); ++i)
+            {
+                bones[i] = bones[i] * wolf_input_model.bones[i].inverse_bind_matrix;
+            }
+
+            glUniformMatrix4x3fv(wolf_bones_location, wolf_input_model.bones.size(), GL_FALSE, reinterpret_cast<float *>(bones.data()));
+
+            auto draw_meshes = [&](bool transparent)
+            {
+                for (auto const &mesh : wolf_meshes)
+                {
+                    if (mesh.material.transparent != transparent)
+                        continue;
+
+                    if (mesh.material.two_sided)
+                        glDisable(GL_CULL_FACE);
+                    else
+                        glEnable(GL_CULL_FACE);
+
+                    if (transparent)
+                        glEnable(GL_BLEND);
+                    else
+                        glDisable(GL_BLEND);
+
+                    if (mesh.material.texture_path)
+                    {
+                        glBindTexture(GL_TEXTURE_2D, wolf_textures[*mesh.material.texture_path]);
+                        glUniform1i(wolf_use_texture_location, 1);
+                    }
+                    else if (mesh.material.color)
+                    {
+                        glUniform1i(wolf_use_texture_location, 0);
+                        glUniform4fv(wolf_color_location, 1, reinterpret_cast<const float *>(&(*mesh.material.color)));
+                    }
+                    else
+                        continue;
+
+                    glBindVertexArray(mesh.vao);
+                    glDrawElements(GL_TRIANGLES, mesh.indices.count, mesh.indices.type, reinterpret_cast<void *>(mesh.indices.view.offset));
+                }
+            };
+
+            draw_meshes(false);
+            glDepthMask(GL_FALSE);
+            draw_meshes(true);
+            glDepthMask(GL_TRUE);
+
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_BLEND);
             glDisable(GL_CULL_FACE);
         }
 
