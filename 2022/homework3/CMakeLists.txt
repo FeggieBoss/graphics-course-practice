@@ -20,17 +20,20 @@ if(APPLE)
 	list(APPEND GLEW_LIBRARIES "${GLEW_LIBRARY}")
 endif()
 
+add_subdirectory(glm)
+
 set(TARGET_NAME "${PROJECT_NAME}")
 
 set(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 
-add_executable(${TARGET_NAME} main.cpp obj_parser.hpp obj_parser.cpp stb_image.h stb_image.c)
+add_executable(${TARGET_NAME} main.cpp obj_parser.hpp obj_parser.cpp stb_image.c stb_image.h tiny_obj_loader.h)
 target_include_directories(${TARGET_NAME} PUBLIC
 	"${SDL2_INCLUDE_DIRS}"
 	"${GLEW_INCLUDE_DIRS}"
 	"${OPENGL_INCLUDE_DIRS}"
 )
 target_link_libraries(${TARGET_NAME} PUBLIC
+	glm
 	"${GLEW_LIBRARIES}"
 	"${SDL2_LIBRARIES}"
 	"${OPENGL_LIBRARIES}"

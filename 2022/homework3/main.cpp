@@ -5,6 +5,9 @@
 #include <SDL2/SDL.h>
 #endif
 
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
+
 #include <GL/glew.h>
 
 #include <string_view>
@@ -75,7 +78,6 @@ uniform vec3 camera_position;
 
 
 uniform sampler2D snow_texture;
-uniform sampler2D normal_texture;
 uniform sampler2D environment_texture;
 
 in vec3 position;
@@ -207,6 +209,99 @@ void main()
 }
 )";
 
+const char watch_tower_vertex_shader_source[] =
+    R"(#version 330 core
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+layout (location = 0) in vec3 in_position;
+layout (location = 1) in vec3 in_normal;
+layout (location = 2) in vec2 in_texcoord;
+out vec3 position;
+out vec3 normal;
+out vec2 texcoord;
+void main()
+{
+    gl_Position = projection * view * model * vec4(in_position, 1.0);
+    position = (model * vec4(in_position, 1.0)).xyz;
+    normal = normalize((model * vec4(in_normal, 0.0)).xyz);
+    texcoord = vec2(in_texcoord.x, 1.f-in_texcoord.y);
+}
+)";
+
+const char watch_tower_fragment_shader_source[] =
+    R"(#version 330 core
+uniform float glossiness;
+uniform float shininess;
+uniform vec3 ambient;
+uniform vec3 light_direction;
+uniform vec3 light_color;
+uniform vec3 camera_position;
+uniform mat4 transform;
+uniform sampler2D shadow_map;
+uniform sampler2D texture;
+uniform sampler2D map_d;
+uniform int flag_map_d;
+in vec3 position;
+in vec3 normal;
+in vec2 texcoord;
+layout (location = 0) out vec4 out_color;
+float diffuse(vec3 direction) {
+    return max(0.0, dot(normal, direction));
+}
+float specular(vec3 direction) {
+    vec3 reflected_direction = 2.0 * normal * dot(normal, direction) - direction;
+    vec3 view_direction = normalize(camera_position - position);
+    return pow(max(0.0, dot(reflected_direction, view_direction)), shininess) * glossiness;
+}
+float phong(vec3 direction) {
+    return diffuse(direction) + specular(direction);
+}
+void main()
+{
+    if(flag_map_d == 1 && texture2D(map_d, texcoord).x < 0.5) discard;
+    vec4 shadow_pos = transform * vec4(position, 1.0);
+    shadow_pos /= shadow_pos.w;
+    shadow_pos = shadow_pos * 0.5 + vec4(0.5);
+    
+    bool in_shadow_texture = (shadow_pos.x > 0.0) && (shadow_pos.x < 1.0) && (shadow_pos.y > 0.0) && (shadow_pos.y < 1.0) && (shadow_pos.z > 0.0) && (shadow_pos.z < 1.0);
+    float shadow_factor = 1.0;
+    
+    float factor = 1.0;
+    if (in_shadow_texture) {
+        vec2 sum = vec2(0.0);
+        float sum_w = 0.0;
+        const int N = 2;
+        float radius = 3.0;
+        for (int x = -N; x <= N; ++x) {
+            for (int y = -N; y <= N; ++y) {
+                float c = exp(-float(x*x + y*y) / (radius*radius));
+                sum += c * texture2D(shadow_map, shadow_pos.xy + vec2(x,y) / vec2(textureSize(shadow_map, 0))).xy;
+                sum_w += c;
+            }
+        }
+        vec2 data = sum / sum_w;
+        float bias = -0.005;
+        float mu = data.r;
+        float sigma = data.g - mu * mu;
+        float z = shadow_pos.z + bias;
+        factor = (z < mu) ? 1.0 : sigma / (sigma + (z - mu) * (z - mu));
+        
+        float delta = 0.125;
+        if(factor<delta) {
+            factor = 0;
+        }
+        else {
+            factor = (factor-delta) * 1.f/(1-delta);
+        }
+    }
+    vec3 light = ambient;
+    light += light_color * phong(light_direction) * factor;
+    vec3 color = texture2D(texture, texcoord).xyz * light;
+    out_color = vec4(color, 1.0);
+}
+)";
+
 GLuint create_shader(GLenum type, const char *source)
 {
     GLuint result = glCreateShader(type);
@@ -333,11 +428,10 @@ std::pair<std::vector<vertex>, std::vector<std::uint32_t>> generate_half_sphere(
                 vertex.position = glm::vec3(0.f, std::sin(lat), 0.f) * radius;
             }
 
-            vertex.texcoords = (glm::vec2({vertex.position.z,vertex.position.x})) * 0.5f;
-            
+            vertex.texcoords = (glm::vec2({vertex.position.z, vertex.position.x})) * 0.5f;
+
             if (longitude > 4 * quality2)
                 vertex.texcoords = glm::vec2(0.5f, 0.5f);
-        
         }
     }
 
@@ -432,7 +526,6 @@ try
     GLuint projection_location = glGetUniformLocation(program, "projection");
     GLuint light_direction_location = glGetUniformLocation(program, "light_direction");
     GLuint camera_position_location = glGetUniformLocation(program, "camera_position");
-    GLuint normal_texture_location = glGetUniformLocation(program, "normal_texture");
     GLuint snow_texture_location = glGetUniformLocation(program, "snow_texture");
     GLuint environment_texture_location = glGetUniformLocation(program, "environment_texture");
 
@@ -508,10 +601,130 @@ try
     glEnableVertexAttribArray(3);
     glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void *)offsetof(vertex, texcoords));
 
+    auto watch_tower_vertex_shader = create_shader(GL_VERTEX_SHADER, watch_tower_vertex_shader_source);
+    auto watch_tower_fragment_shader = create_shader(GL_FRAGMENT_SHADER, watch_tower_fragment_shader_source);
+    auto watch_tower_program = create_program(watch_tower_vertex_shader, watch_tower_fragment_shader);
+
+    GLuint watch_tower_model_location = glGetUniformLocation(program, "model");
+    GLuint watch_tower_view_location = glGetUniformLocation(program, "view");
+    GLuint watch_tower_projection_location = glGetUniformLocation(program, "projection");
+    GLuint watch_tower_transform_location = glGetUniformLocation(program, "transform");
+    GLuint watch_tower_ambient_location = glGetUniformLocation(program, "ambient");
+    GLuint watch_tower_light_direction_location = glGetUniformLocation(program, "light_direction");
+    GLuint watch_tower_light_color_location = glGetUniformLocation(program, "light_color");
+    GLuint watch_tower_camera_position_location = glGetUniformLocation(program, "camera_position");
+    GLuint watch_tower_shadow_map_location = glGetUniformLocation(program, "shadow_map");
+    GLuint watch_tower_texture_location = glGetUniformLocation(program, "texture");
+    GLuint watch_tower_normal_location = glGetUniformLocation(program, "normal_texture");
+
     std::string project_root = PROJECT_ROOT;
-    GLuint normal_texture = load_texture(project_root + "/textures/sphere_normal.jpg");
     GLuint snow_texture = load_texture(project_root + "/textures/snow_texture.jpeg");
     GLuint environment_texture = load_texture(project_root + "/textures/environment_map.jpg");
+    GLuint watch_tower_texture = load_texture(project_root + "/textures/Wood_Tower_Col.jpg");
+    GLuint watch_tower_normal_texture = load_texture(project_root + "/textures/Wood_Tower_Nor.jpg");
+
+    std::string watch_tower_path = project_root + "/textures/watch_tower.obj";
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> watch_tower_shapes;
+    std::vector<tinyobj::material_t> watch_tower_materials;
+    tinyobj::LoadObj(&attrib, &watch_tower_shapes, &watch_tower_materials, nullptr, watch_tower_path.c_str(), watch_tower_path.c_str());
+
+    obj_data watch_tower_data;
+    {
+        // Loop over shapes
+        for (size_t s = 0; s < watch_tower_shapes.size(); s++)
+        {
+            // Loop over faces(polygon)
+            size_t index_offset = 0;
+            for (size_t f = 0; f < watch_tower_shapes[s].mesh.num_face_vertices.size(); f++)
+            {
+                size_t fv = size_t(watch_tower_shapes[s].mesh.num_face_vertices[f]);
+
+                // Loop over vertices in the face.
+                for (size_t v = 0; v < fv; v++)
+                {
+                    watch_tower_data.vertices.push_back(obj_data::vertex());
+
+                    // access to vertex
+                    tinyobj::index_t idx = watch_tower_shapes[s].mesh.indices[index_offset + v];
+
+                    tinyobj::real_t vx = attrib.vertices[3 * size_t(idx.vertex_index) + 0];
+                    tinyobj::real_t vy = attrib.vertices[3 * size_t(idx.vertex_index) + 1];
+                    tinyobj::real_t vz = attrib.vertices[3 * size_t(idx.vertex_index) + 2];
+                    watch_tower_data.vertices.back().position = {vx, vy, vz};
+
+                    // Check if `normal_index` is zero or positive. negative = no normal data
+                    if (idx.normal_index >= 0)
+                    {
+                        tinyobj::real_t nx = attrib.normals[3 * size_t(idx.normal_index) + 0];
+                        tinyobj::real_t ny = attrib.normals[3 * size_t(idx.normal_index) + 1];
+                        tinyobj::real_t nz = attrib.normals[3 * size_t(idx.normal_index) + 2];
+
+                        watch_tower_data.vertices.back().normal = {nx, ny, nz};
+                    }
+
+                    // Check if `texcoord_index` is zero or positive. negative = no texcoord data
+                    if (idx.texcoord_index >= 0)
+                    {
+                        tinyobj::real_t tx = attrib.texcoords[2 * size_t(idx.texcoord_index) + 0];
+                        tinyobj::real_t ty = attrib.texcoords[2 * size_t(idx.texcoord_index) + 1];
+
+                        watch_tower_data.vertices.back().texcoord = {tx, ty};
+                    }
+                    // Optional: vertex colors
+                    // tinyobj::real_t red   = attrib.colors[3*size_t(idx.vertex_index)+0];
+                    // tinyobj::real_t green = attrib.colors[3*size_t(idx.vertex_index)+1];
+                    // tinyobj::real_t blue  = attrib.colors[3*size_t(idx.vertex_index)+2];
+                }
+                index_offset += fv;
+
+                // per-face material
+                watch_tower_shapes[s].mesh.material_ids[f];
+            }
+        }
+    }
+    GLuint watch_tower_vao, watch_tower_vbo;
+    glGenVertexArrays(1, &watch_tower_vao);
+    glBindVertexArray(watch_tower_vao);
+
+    glGenBuffers(1, &watch_tower_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, watch_tower_vbo);
+    glBufferData(GL_ARRAY_BUFFER, watch_tower_data.vertices.size() * sizeof(obj_data::vertex), watch_tower_data.vertices.data(), GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *)(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *)(12));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *)(24));
+
+    float infty = std::numeric_limits<float>::infinity();
+    float min_x = infty, max_x = -infty;
+    float min_y = infty, max_y = -infty;
+    float min_z = infty, max_z = -infty;
+    for (obj_data::vertex el : watch_tower_data.vertices)
+    {
+        min_x = std::min(min_x, el.position[0]);
+        max_x = std::max(max_x, el.position[0]);
+
+        min_y = std::min(min_y, el.position[1]);
+        max_y = std::max(max_y, el.position[1]);
+
+        min_z = std::min(min_z, el.position[2]);
+        max_z = std::max(max_z, el.position[2]);
+    }
+
+    std::vector<std::vector<float>> watch_tower_bounding_box(8, std::vector<float>(3));
+    watch_tower_bounding_box = {
+        {min_x, min_y, min_z},
+        {min_x, min_y, max_z},
+        {min_x, max_y, min_z},
+        {min_x, max_y, max_z},
+        {max_x, min_y, min_z},
+        {max_x, min_y, max_z},
+        {max_x, max_y, min_z},
+        {max_x, max_y, max_z},
+    };
 
     auto last_frame_start = std::chrono::high_resolution_clock::now();
     float time = 0.f;
@@ -610,6 +823,38 @@ try
 
         glm::vec3 camera_position = (glm::inverse(view) * glm::vec4(0.f, 0.f, 0.f, 1.f)).xyz();
 
+        glm::vec3 light_z = -light_direction;
+        glm::vec3 light_x = glm::normalize(glm::cross(light_z, {0.f, 1.f, 0.f}));
+        glm::vec3 light_y = glm::cross(light_x, light_z);
+        float c_x = (max_x + min_x) / 2;
+        float c_y = (max_y + min_y) / 2;
+        float c_z = (max_z + min_z) / 2;
+        float light_x_mx = -infty;
+        for (auto &el : watch_tower_bounding_box)
+        {
+            light_x_mx = std::max(light_x_mx, std::abs(glm::dot({el[0] - c_x, el[1] - c_y, el[2] - c_z}, light_x)));
+        }
+        float light_y_mx = -infty;
+        for (auto &el : watch_tower_bounding_box)
+        {
+            light_y_mx = std::max(light_y_mx, std::abs(glm::dot({el[0] - c_x, el[1] - c_y, el[2] - c_z}, light_y)));
+        }
+        float light_z_mx = -infty;
+        for (auto &el : watch_tower_bounding_box)
+        {
+            light_z_mx = std::max(light_z_mx, std::abs(glm::dot({el[0] - c_x, el[1] - c_y, el[2] - c_z}, light_z)));
+        }
+        light_x *= light_x_mx;
+        light_y *= light_y_mx;
+        light_z *= light_z_mx;
+        glm::mat4 transform = glm::mat4(1.f);
+        transform = {
+            {light_x[0], light_y[0], light_z[0], c_x},
+            {light_x[1], light_y[1], light_z[1], c_y},
+            {light_x[2], light_y[2], light_z[2], c_z},
+            {0.0, 0.0, 0.0, 1.0}};
+        transform = glm::inverse(glm::transpose(transform));
+
         {
             glUseProgram(background_program);
 
@@ -643,12 +888,8 @@ try
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, snow_texture);
 
-            glUniform1i(normal_texture_location, 1);
+            glUniform1i(environment_texture_location, 1);
             glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, normal_texture);
-
-            glUniform1i(environment_texture_location, 2);
-            glActiveTexture(GL_TEXTURE2);
             glBindTexture(GL_TEXTURE_2D, environment_texture);
 
             glBindVertexArray(sphere_vao);
@@ -670,6 +911,35 @@ try
 
             glBindVertexArray(floor_vao);
             glDrawElements(GL_TRIANGLES, half_sphere_index_count, GL_UNSIGNED_INT, nullptr);
+        }
+
+        {
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LEQUAL);
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_BACK);
+
+            glUseProgram(watch_tower_program);
+            glUniformMatrix4fv(watch_tower_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
+            glUniformMatrix4fv(watch_tower_view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
+            glUniformMatrix4fv(watch_tower_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
+            glUniformMatrix4fv(watch_tower_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
+            glUniform3fv(watch_tower_light_direction_location, 1, reinterpret_cast<float *>(&light_direction));
+            glUniform3fv(watch_tower_camera_position_location, 1, reinterpret_cast<float *>(&cameraPos));
+            glUniform3f(watch_tower_light_color_location, 0.8f, 0.8f, 0.8f);
+            glUniform3f(watch_tower_ambient_location, 0.2f, 0.2f, 0.2f);
+            glUniform1i(watch_tower_shadow_map_location, 1);
+
+            glBindVertexArray(watch_tower_vao);
+
+
+            glUniform1i(watch_tower_texture_location, watch_tower_texture);
+            glUniform1i(watch_tower_normal_location, watch_tower_normal_texture);
+
+            glDrawArrays(GL_TRIANGLES, 0, watch_tower_shapes[0].mesh.indices.size());
+
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_CULL_FACE);
         }
 
         SDL_GL_SwapWindow(window);
