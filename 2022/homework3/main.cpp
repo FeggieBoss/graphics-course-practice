@@ -231,8 +231,6 @@ void main()
 
 const char watch_tower_fragment_shader_source[] =
     R"(#version 330 core
-uniform float glossiness;
-uniform float shininess;
 uniform vec3 ambient;
 uniform vec3 light_direction;
 uniform vec3 light_color;
@@ -240,8 +238,7 @@ uniform vec3 camera_position;
 uniform mat4 transform;
 uniform sampler2D shadow_map;
 uniform sampler2D texture;
-uniform sampler2D map_d;
-uniform int flag_map_d;
+
 in vec3 position;
 in vec3 normal;
 in vec2 texcoord;
@@ -249,54 +246,9 @@ layout (location = 0) out vec4 out_color;
 float diffuse(vec3 direction) {
     return max(0.0, dot(normal, direction));
 }
-float specular(vec3 direction) {
-    vec3 reflected_direction = 2.0 * normal * dot(normal, direction) - direction;
-    vec3 view_direction = normalize(camera_position - position);
-    return pow(max(0.0, dot(reflected_direction, view_direction)), shininess) * glossiness;
-}
-float phong(vec3 direction) {
-    return diffuse(direction) + specular(direction);
-}
 void main()
 {
-    if(flag_map_d == 1 && texture2D(map_d, texcoord).x < 0.5) discard;
-    vec4 shadow_pos = transform * vec4(position, 1.0);
-    shadow_pos /= shadow_pos.w;
-    shadow_pos = shadow_pos * 0.5 + vec4(0.5);
-    
-    bool in_shadow_texture = (shadow_pos.x > 0.0) && (shadow_pos.x < 1.0) && (shadow_pos.y > 0.0) && (shadow_pos.y < 1.0) && (shadow_pos.z > 0.0) && (shadow_pos.z < 1.0);
-    float shadow_factor = 1.0;
-    
-    float factor = 1.0;
-    if (in_shadow_texture) {
-        vec2 sum = vec2(0.0);
-        float sum_w = 0.0;
-        const int N = 2;
-        float radius = 3.0;
-        for (int x = -N; x <= N; ++x) {
-            for (int y = -N; y <= N; ++y) {
-                float c = exp(-float(x*x + y*y) / (radius*radius));
-                sum += c * texture2D(shadow_map, shadow_pos.xy + vec2(x,y) / vec2(textureSize(shadow_map, 0))).xy;
-                sum_w += c;
-            }
-        }
-        vec2 data = sum / sum_w;
-        float bias = -0.005;
-        float mu = data.r;
-        float sigma = data.g - mu * mu;
-        float z = shadow_pos.z + bias;
-        factor = (z < mu) ? 1.0 : sigma / (sigma + (z - mu) * (z - mu));
-        
-        float delta = 0.125;
-        if(factor<delta) {
-            factor = 0;
-        }
-        else {
-            factor = (factor-delta) * 1.f/(1-delta);
-        }
-    }
-    vec3 light = ambient;
-    light += light_color * phong(light_direction) * factor;
+    vec3 light = vec3(1.f);
     vec3 color = texture2D(texture, texcoord).xyz * light;
     out_color = vec4(color, 1.0);
 }
@@ -872,6 +824,61 @@ try
 
         {
             glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LEQUAL);
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_BACK);
+
+            model = glm::scale(model, glm::vec3(0.09f));
+            model = glm::translate(model, glm::vec3(0.f, -3.f, 0.f));
+
+            glUseProgram(watch_tower_program);
+            glUniformMatrix4fv(watch_tower_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
+            glUniformMatrix4fv(watch_tower_view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
+            glUniformMatrix4fv(watch_tower_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
+            glUniformMatrix4fv(watch_tower_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
+            glUniform3fv(watch_tower_light_direction_location, 1, reinterpret_cast<float *>(&light_direction));
+            glUniform3fv(watch_tower_camera_position_location, 1, reinterpret_cast<float *>(&cameraPos));
+            glUniform3f(watch_tower_light_color_location, 0.8f, 0.8f, 0.8f);
+            glUniform3f(watch_tower_ambient_location, 0.2f, 0.2f, 0.2f);
+            glUniform1i(watch_tower_shadow_map_location, 1);
+
+            glUniform1i(watch_tower_texture_location, 0);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, watch_tower_texture);
+
+            glUniform1i(watch_tower_normal_location, 1);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, watch_tower_normal_texture);
+
+            glBindVertexArray(watch_tower_vao);
+            glDrawArrays(GL_TRIANGLES, 0, watch_tower_shapes[0].mesh.indices.size());
+
+            glDisable(GL_CULL_FACE);
+            glDisable(GL_DEPTH_TEST);
+
+            model = glm::mat4(1.f);
+        }
+
+        {
+            glEnable(GL_DEPTH_TEST);
+
+            glUseProgram(floor_program);
+            glUniformMatrix4fv(floor_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
+            glUniformMatrix4fv(floor_view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
+            glUniformMatrix4fv(floor_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
+
+            glUniform1i(floor_snow_texture_location, 0);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, snow_texture);
+
+            glBindVertexArray(floor_vao);
+            glDrawElements(GL_TRIANGLES, half_sphere_index_count, GL_UNSIGNED_INT, nullptr);
+
+            glDisable(GL_DEPTH_TEST);
+        }
+
+        {
+            glEnable(GL_DEPTH_TEST);
             glEnable(GL_BLEND);
 
             glBlendEquation(GL_FUNC_ADD);
@@ -897,49 +904,6 @@ try
 
             glDisable(GL_DEPTH_TEST);
             glDisable(GL_BLEND);
-        }
-
-        {
-            glUseProgram(floor_program);
-            glUniformMatrix4fv(floor_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
-            glUniformMatrix4fv(floor_view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
-            glUniformMatrix4fv(floor_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
-
-            glUniform1i(floor_snow_texture_location, 0);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, snow_texture);
-
-            glBindVertexArray(floor_vao);
-            glDrawElements(GL_TRIANGLES, half_sphere_index_count, GL_UNSIGNED_INT, nullptr);
-        }
-
-        {
-            glEnable(GL_DEPTH_TEST);
-            glDepthFunc(GL_LEQUAL);
-            glEnable(GL_CULL_FACE);
-            glCullFace(GL_BACK);
-
-            glUseProgram(watch_tower_program);
-            glUniformMatrix4fv(watch_tower_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
-            glUniformMatrix4fv(watch_tower_view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
-            glUniformMatrix4fv(watch_tower_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
-            glUniformMatrix4fv(watch_tower_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
-            glUniform3fv(watch_tower_light_direction_location, 1, reinterpret_cast<float *>(&light_direction));
-            glUniform3fv(watch_tower_camera_position_location, 1, reinterpret_cast<float *>(&cameraPos));
-            glUniform3f(watch_tower_light_color_location, 0.8f, 0.8f, 0.8f);
-            glUniform3f(watch_tower_ambient_location, 0.2f, 0.2f, 0.2f);
-            glUniform1i(watch_tower_shadow_map_location, 1);
-
-            glBindVertexArray(watch_tower_vao);
-
-
-            glUniform1i(watch_tower_texture_location, watch_tower_texture);
-            glUniform1i(watch_tower_normal_location, watch_tower_normal_texture);
-
-            glDrawArrays(GL_TRIANGLES, 0, watch_tower_shapes[0].mesh.indices.size());
-
-            glDisable(GL_DEPTH_TEST);
-            glDisable(GL_CULL_FACE);
         }
 
         SDL_GL_SwapWindow(window);
