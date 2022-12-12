@@ -224,8 +224,8 @@ void main()
     if (in_shadow_texture) {
         vec2 sum = vec2(0.0);
         float sum_w = 0.0;
-        const int N = 2;
-        float radius = 3.0;
+        const int N = 3;
+        float radius = 5.0;
         for (int x = -N; x <= N; ++x) {
             for (int y = -N; y <= N; ++y) {
                 float c = exp(-float(x*x + y*y) / (radius*radius));
@@ -350,54 +350,100 @@ const char wolf_vertex_shader_source[] =
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
-uniform mat4x3 bones[64]; // task2
+uniform mat4x3 bones[64];
 
 layout (location = 0) in vec3 in_position;
 layout (location = 1) in vec3 in_normal;
 layout (location = 2) in vec2 in_texcoord;
-layout (location = 3) in ivec4 in_joints; // task1
-layout (location = 4) in vec4 in_weights; // task1
+layout (location = 3) in ivec4 in_joints;
+layout (location = 4) in vec4 in_weights;
 
 
 out vec3 normal;
 out vec2 texcoord;
-out vec4 weights; // task1
+out vec4 weights;
+out vec3 position;
 
 void main()
 {
-    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// 
-    // task2
     mat4x3 average = mat4x3(0);
     average += bones[in_joints.x] * in_weights.x;
     average += bones[in_joints.y] * in_weights.y;
     average += bones[in_joints.z] * in_weights.z;
     average += bones[in_joints.w] * in_weights.w;
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     gl_Position = projection * view * model * mat4(average) * vec4(in_position, 1.0);
     normal = mat3(model) * mat3(average) * in_normal;
     texcoord = in_texcoord;
-    weights = in_weights; // task1
+    weights = in_weights;
+    position = (model * mat4(average) * vec4(in_position, 1.0)).xyz;
 }
 )";
 
 const char wolf_fragment_shader_source[] =
     R"(#version 330 core
 
+uniform sampler2D shadow_map;
 uniform sampler2D albedo;
+
 uniform vec4 color;
 uniform int use_texture;
-
+uniform vec3 ambient;
 uniform vec3 light_direction;
+uniform vec3 light_color;
+uniform vec3 camera_position;
+uniform mat4 transform;
+
 
 layout (location = 0) out vec4 out_color;
 
+in vec3 position;
 in vec3 normal;
 in vec2 texcoord;
-in vec4 weights; // task1
+in vec4 weights;
+
+float diffuse(vec3 direction) {
+    return max(0.0, dot(normal, direction));
+}
 
 void main()
 {
+    vec4 shadow_pos = transform * vec4(position, 1.0);
+    shadow_pos /= shadow_pos.w;
+    shadow_pos = shadow_pos * 0.5 + vec4(0.5);
+    
+    bool in_shadow_texture = (shadow_pos.x > 0.0) && (shadow_pos.x < 1.0) && (shadow_pos.y > 0.0) && (shadow_pos.y < 1.0) && (shadow_pos.z > 0.0) && (shadow_pos.z < 1.0);
+    float shadow_factor = 1.0;
+    
+    float factor = 1.0;
+    if (in_shadow_texture) {
+        vec2 sum = vec2(0.0);
+        float sum_w = 0.0;
+        const int N = 2;
+        float radius = 3.0;
+        for (int x = -N; x <= N; ++x) {
+            for (int y = -N; y <= N; ++y) {
+                float c = exp(-float(x*x + y*y) / (radius*radius));
+                sum += c * texture(shadow_map, shadow_pos.xy + vec2(x,y) / vec2(textureSize(shadow_map, 0))).xy;
+                sum_w += c;
+            }
+        }
+        vec2 data = sum / sum_w;
+        float bias = -0.005;
+        float mu = data.r;
+        float sigma = data.g - mu * mu;
+        float z = shadow_pos.z + bias;
+        factor = (z < mu) ? 1.0 : sigma / (sigma + (z - mu) * (z - mu));
+        
+        float delta = 0.125;
+        if(factor<delta) {
+            factor = 0;
+        }
+        else {
+            factor = (factor-delta) * 1.f/(1-delta);
+        }
+    }
+
     vec4 albedo_color;
 
     if (use_texture == 1)
@@ -405,11 +451,9 @@ void main()
     else
         albedo_color = color;
 
-    float ambient = 0.4;
-    float diffuse = max(0.0, dot(normalize(normal), light_direction));
-
-    out_color = vec4(albedo_color.rgb * (ambient + diffuse), albedo_color.a);
-    //out_color = weights; // task1
+    vec3 light = ambient + light_color * diffuse(light_direction) * factor;
+    vec3 color = albedo_color.rgb.rgb * light;
+    out_color = vec4(color, albedo_color.a);
 }
 )";
 
@@ -417,13 +461,29 @@ const char shadow_vertex_shader_source[] =
     R"(#version 330 core
 uniform mat4 model;
 uniform mat4 transform;
+uniform mat4x3 bones[64];
+uniform int is_wolf;
+
 layout (location = 0) in vec3 in_position;
+layout (location = 1) in vec3 in_normal;
 layout (location = 2) in vec2 in_texcoord;
+layout (location = 3) in ivec4 in_joints;
+layout (location = 4) in vec4 in_weights;
+
+
 out vec2 texcoord;
 void main()
 {
-    gl_Position = transform * model * vec4(in_position, 1.0);
-    texcoord = vec2(in_texcoord.x, 1.f-in_texcoord.y);
+    if(is_wolf==1) {
+        mat4x3 average = mat4x3(0);
+        average += bones[in_joints.x] * in_weights.x;
+        average += bones[in_joints.y] * in_weights.y;
+        average += bones[in_joints.z] * in_weights.z;
+        average += bones[in_joints.w] * in_weights.w;
+        gl_Position = transform * model * mat4(average) * vec4(in_position, 1.0);
+    }
+    else
+        gl_Position = transform * model * vec4(in_position, 1.0);
 }
 )";
 
@@ -697,6 +757,11 @@ try
     GLuint wolf_use_texture_location = glGetUniformLocation(wolf_program, "use_texture");
     GLuint wolf_light_direction_location = glGetUniformLocation(wolf_program, "light_direction");
     GLuint wolf_bones_location = glGetUniformLocation(wolf_program, "bones");
+    GLuint wolf_ambient_location = glGetUniformLocation(wolf_program, "ambient");
+    GLuint wolf_light_color_location = glGetUniformLocation(wolf_program, "light_color");
+    GLuint wolf_transform_location = glGetUniformLocation(wolf_program, "transform");
+    GLuint wolf_shadow_map_location = glGetUniformLocation(wolf_program, "shadow_map");
+    GLuint wolf_camera_position_location = glGetUniformLocation(wolf_program, "camera_position");
 
     auto floor_vertex_shader = create_shader(GL_VERTEX_SHADER, floor_vertex_shader_source);
     auto floor_fragment_shader = create_shader(GL_FRAGMENT_SHADER, floor_fragment_shader_source);
@@ -771,6 +836,8 @@ try
 
     GLuint shadow_model_location = glGetUniformLocation(shadow_program, "model");
     GLuint shadow_transform_location = glGetUniformLocation(shadow_program, "transform");
+    GLuint shadow_bones_location = glGetUniformLocation(shadow_program, "bones");
+    GLuint shadow_is_wolf_location = glGetUniformLocation(shadow_program, "is_wolf");
 
     auto watch_tower_vertex_shader = create_shader(GL_VERTEX_SHADER, watch_tower_vertex_shader_source);
     auto watch_tower_fragment_shader = create_shader(GL_FRAGMENT_SHADER, watch_tower_fragment_shader_source);
@@ -993,7 +1060,7 @@ try
         {max_x, max_y, max_z},
     };
 
-    GLsizei shadow_map_resolution = 1024;
+    GLsizei shadow_map_resolution = 2048;
     GLuint shadow_map;
     glGenTextures(1, &shadow_map);
     glActiveTexture(GL_TEXTURE0 + 1);
@@ -1219,6 +1286,7 @@ try
             glUseProgram(shadow_program);
             glUniformMatrix4fv(shadow_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
             glUniformMatrix4fv(shadow_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
+            glUniform1i(shadow_is_wolf_location, 0);
 
             glBindVertexArray(watch_tower_vao);
             glDrawArrays(GL_TRIANGLES, 0, watch_tower_shapes[0].mesh.indices.size());
@@ -1235,27 +1303,36 @@ try
 
         {
             glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LEQUAL);
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_BACK);
+
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, shadow_fbo);
+            glViewport(0, 0, shadow_map_resolution, shadow_map_resolution);
 
             model = glm::scale(model, glm::vec3(0.3f));
-
-            time_wolf += !paused * (1-k)/10.f;
+            time_wolf += !paused * (1 - k) / 10.f;
             model = glm::rotate(model, -wolf_speed * 0.1f * time_wolf, glm::vec3(0.f, 1.f, 0.f));
-            model = glm::translate(model, glm::vec3(2.3f, -0.5f, 0.f));
+            model = glm::translate(model, glm::vec3(2.3f, -0.45f, 0.f));
             model = glm::rotate(model, 0.18f, glm::vec3(1.f, 0.f, 0.f));
 
-            glUseProgram(wolf_program);
-            glUniformMatrix4fv(wolf_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
-            glUniformMatrix4fv(wolf_view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
-            glUniformMatrix4fv(wolf_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
-            glUniform3fv(wolf_light_direction_location, 1, reinterpret_cast<float *>(&light_direction));
+            glUseProgram(shadow_program);
+            glUniformMatrix4fv(shadow_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
+            glUniformMatrix4fv(shadow_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
+            glUniform1i(shadow_is_wolf_location, 1);
 
             std::vector<glm::mat4x3> bones(wolf_input_model.bones.size());
             const gltf_model::animation &animation = wolf_input_model.animations.at("01_Run");
+            const gltf_model::animation &animation2 = wolf_input_model.animations.at("02_walk");
             for (int i = 0; i < wolf_input_model.bones.size(); ++i)
             {
-                glm::mat4 translation_mt = glm::translate(glm::mat4(1.f), animation.bones[i].translation(std::fmod(time, animation.max_time))); // 0.f)); task4
-                glm::mat4 scale_mt = glm::scale(glm::mat4(1.f), animation.bones[i].scale(std::fmod(time, animation.max_time)));                 // 0.f)); task4
-                glm::mat4 rotation = glm::toMat4(animation.bones[i].rotation(std::fmod(time, animation.max_time)));                             // 0.f)); task4
+                glm::vec3 translation_lerp = glm::lerp(animation.bones[i].translation(std::fmod(time, animation.max_time)), animation2.bones[i].translation(std::fmod(time, animation2.max_time)), k);
+                glm::vec3 scale_lerp = glm::lerp(animation.bones[i].scale(std::fmod(time, animation.max_time)), animation2.bones[i].scale(std::fmod(time, animation2.max_time)), k);
+                glm::quat rotation_lerp = glm::slerp(animation.bones[i].rotation(std::fmod(time, animation.max_time)), animation2.bones[i].rotation(std::fmod(time, animation2.max_time)), k);
+
+                glm::mat4 translation_mt = glm::translate(glm::mat4(1.f), translation_lerp);
+                glm::mat4 scale_mt = glm::scale(glm::mat4(1.f), scale_lerp);
+                glm::mat4 rotation = glm::toMat4(rotation_lerp);
                 glm::mat4 transform = translation_mt * rotation * scale_mt;
                 if (wolf_input_model.bones[i].parent != -1)
                 {
@@ -1269,8 +1346,69 @@ try
                 bones[i] = bones[i] * wolf_input_model.bones[i].inverse_bind_matrix;
             }
 
-            glUniformMatrix4x3fv(wolf_bones_location, wolf_input_model.bones.size(), GL_FALSE, reinterpret_cast<float *>(bones.data()));
+            glUniformMatrix4x3fv(shadow_bones_location, wolf_input_model.bones.size(), GL_FALSE, reinterpret_cast<float *>(bones.data()));
 
+            auto draw_meshes = [&](bool transparent)
+            {
+                for (auto const &mesh : wolf_meshes)
+                {
+                    if (mesh.material.transparent != transparent)
+                        continue;
+
+                    if (mesh.material.texture_path)
+                    {
+                    }
+                    else if (mesh.material.color)
+                    {
+                    }
+                    else
+                        continue;
+
+                    glBindVertexArray(mesh.vao);
+                    glDrawElements(GL_TRIANGLES, mesh.indices.count, mesh.indices.type, reinterpret_cast<void *>(mesh.indices.view.offset));
+                }
+            };
+
+            draw_meshes(false);
+            glDepthMask(GL_FALSE);
+            draw_meshes(true);
+            glDepthMask(GL_TRUE);
+
+            model = glm::mat4(1.f);
+            model = glm::scale(model, glm::vec3(10.f));
+
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            glViewport(0, 0, width, height);
+
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_BLEND);
+            glDisable(GL_CULL_FACE);
+        }
+
+        {
+            glEnable(GL_DEPTH_TEST);
+
+            model = glm::scale(model, glm::vec3(0.3f));
+            model = glm::rotate(model, -wolf_speed * 0.1f * time_wolf, glm::vec3(0.f, 1.f, 0.f));
+            model = glm::translate(model, glm::vec3(2.3f, -0.45f, 0.f));
+            model = glm::rotate(model, 0.18f, glm::vec3(1.f, 0.f, 0.f));
+
+            glUseProgram(wolf_program);
+            glUniformMatrix4fv(wolf_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
+            glUniformMatrix4fv(wolf_view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
+            glUniformMatrix4fv(wolf_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
+            glUniform3fv(wolf_light_direction_location, 1, reinterpret_cast<float *>(&light_direction));
+            glUniformMatrix4fv(wolf_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
+            glUniform3fv(wolf_camera_position_location, 1, reinterpret_cast<float *>(&cameraPos));
+            glUniform3fv(wolf_ambient_location, 1, reinterpret_cast<float *>(&ambient));
+            glUniform3f(wolf_light_color_location, 0.8f, 0.8f, 0.8f);
+
+            glUniform1i(wolf_shadow_map_location, 20);
+            glActiveTexture(GL_TEXTURE20);
+            glBindTexture(GL_TEXTURE_2D, shadow_map);
+
+            std::vector<glm::mat4x3> bones(wolf_input_model.bones.size());
+            const gltf_model::animation &animation = wolf_input_model.animations.at("01_Run");
             const gltf_model::animation &animation2 = wolf_input_model.animations.at("02_walk");
             for (int i = 0; i < wolf_input_model.bones.size(); ++i)
             {
@@ -1315,11 +1453,14 @@ try
 
                     if (mesh.material.texture_path)
                     {
+                        glActiveTexture(GL_TEXTURE1);
+                        glUniform1i(wolf_albedo_location, 1);
                         glBindTexture(GL_TEXTURE_2D, wolf_textures[*mesh.material.texture_path]);
                         glUniform1i(wolf_use_texture_location, 1);
                     }
                     else if (mesh.material.color)
                     {
+                        glActiveTexture(GL_TEXTURE0);
                         glUniform1i(wolf_use_texture_location, 0);
                         glUniform4fv(wolf_color_location, 1, reinterpret_cast<const float *>(&(*mesh.material.color)));
                     }
