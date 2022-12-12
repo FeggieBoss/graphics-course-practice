@@ -75,6 +75,7 @@ const char fragment_shader_source[] =
 
 uniform vec3 light_direction;
 uniform vec3 camera_position;
+uniform vec3 ambient;
 
 
 uniform sampler2D snow_texture;
@@ -94,8 +95,6 @@ float diffuse(vec3 normal, vec3 light_direction) {
 
 void main()
 {
-    float ambient_light = 0.2;
-
     vec3 camera_direction = normalize(position - camera_position);
     float cos_theta = abs(dot(normal, camera_direction));
     float n = 1.5f;
@@ -103,7 +102,7 @@ void main()
     float R = R0 + (1-R0)*pow(1-cos_theta, 5.f);
 
     vec3 reflected_direction = reflect(camera_direction, normal);
-    float lightness = ambient_light + diffuse(normal, light_direction);
+    vec3 lightness = ambient + vec3(diffuse(normal, light_direction));
     float x = atan(reflected_direction.z, reflected_direction.x) / PI * 0.5 + 0.5;
     float y = -atan(reflected_direction.y, length(reflected_direction.xz)) / PI + 0.5;
     vec3 reflec_color = texture(environment_texture,vec2(x,y)).xyz;
@@ -140,6 +139,7 @@ const char background_fragment_shader_source[] =
 uniform sampler2D environment_texture;
 
 uniform vec3 camera_position;
+uniform vec3 ambient;
 
 in vec3 position;
 
@@ -150,14 +150,12 @@ const float PI = 3.141592653589793;
 
 void main() 
 {
-    float ambient_light = 0.9;
-
     vec3 view_direction = position-camera_position;
     
     float x = atan(view_direction.z, view_direction.x) / PI * 0.5 + 0.5;
     float y = -atan(view_direction.y, length(view_direction.xz)) / PI + 0.5;
     
-    out_color = vec4(ambient_light * texture(environment_texture,vec2(x,y)).xyz, 0.f);
+    out_color = vec4(ambient * texture(environment_texture,vec2(x,y)).xyz, 0.f);
 }
 )";
 
@@ -179,10 +177,10 @@ out vec2 texcoord;
 
 void main()
 {
+    gl_Position = projection * view * model * vec4(in_position, 1.0);
     position = (model * vec4(in_position, 1.0)).xyz;
-    gl_Position = projection * view * vec4(position, 1.0);
-    normal = normalize(mat3(model) * in_normal);
-    texcoord = in_texcoord;
+    normal = normalize((model * vec4(in_normal, 0.0)).xyz);
+    texcoord = vec2(in_texcoord.x, in_texcoord.y);
 }
 )";
 
@@ -191,11 +189,16 @@ const char floor_fragment_shader_source[] =
 
 uniform vec3 light_direction;
 uniform vec3 camera_position;
+uniform vec3 ambient;
+uniform mat4 model;
 
 
 uniform sampler2D snow_texture;
 uniform sampler2D normal_texture;
 uniform sampler2D environment_texture;
+uniform sampler2D shadow_map;
+uniform mat4 transform;
+uniform vec3 light_color;
 
 in vec3 position;
 in vec3 normal;
@@ -203,9 +206,51 @@ in vec2 texcoord;
 
 layout (location = 0) out vec4 out_color;
 
+float diffuse(vec3 direction) {
+    return max(0.0, dot(normal, direction));
+}
+
 void main()
 {
-    out_color = vec4(texture(snow_texture,texcoord).rgb, 1.0);
+    vec4 shadow_pos = transform * vec4(position, 1.0);
+    shadow_pos /= shadow_pos.w;
+    shadow_pos = shadow_pos * 0.5 + vec4(0.5);
+    
+    bool in_shadow_texture = (shadow_pos.x > 0.0) && (shadow_pos.x < 1.0) && (shadow_pos.y > 0.0) && (shadow_pos.y < 1.0) && (shadow_pos.z > 0.0) && (shadow_pos.z < 1.0);
+    float shadow_factor = 1.0;
+    
+    float factor = 1.0;
+    if (in_shadow_texture) {
+        vec2 sum = vec2(0.0);
+        float sum_w = 0.0;
+        const int N = 2;
+        float radius = 3.0;
+        for (int x = -N; x <= N; ++x) {
+            for (int y = -N; y <= N; ++y) {
+                float c = exp(-float(x*x + y*y) / (radius*radius));
+                sum += c * texture(shadow_map, shadow_pos.xy + vec2(x,y) / vec2(textureSize(shadow_map, 0))).xy;
+                sum_w += c;
+            }
+        }
+        vec2 data = sum / sum_w;
+        float bias = -0.005;
+        float mu = data.r;
+        float sigma = data.g - mu * mu;
+        float z = shadow_pos.z + bias;
+        factor = (z < mu) ? 1.0 : sigma / (sigma + (z - mu) * (z - mu));
+        
+        float delta = 0.125;
+        if(factor<delta) {
+            factor = 0;
+        }
+        else {
+            factor = (factor-delta) * 1.f/(1-delta);
+        }
+    }
+    
+    vec3 light = ambient + light_color * diffuse(light_direction) * factor;
+    vec3 color = texture(snow_texture, texcoord).rgb * light;
+    out_color = vec4(color, 1.0);
 }
 )";
 
@@ -214,12 +259,15 @@ const char watch_tower_vertex_shader_source[] =
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
+
 layout (location = 0) in vec3 in_position;
 layout (location = 1) in vec3 in_normal;
 layout (location = 2) in vec2 in_texcoord;
+
 out vec3 position;
 out vec3 normal;
 out vec2 texcoord;
+
 void main()
 {
     gl_Position = projection * view * model * vec4(in_position, 1.0);
@@ -236,21 +284,88 @@ uniform vec3 light_direction;
 uniform vec3 light_color;
 uniform vec3 camera_position;
 uniform mat4 transform;
+
 uniform sampler2D shadow_map;
-uniform sampler2D texture;
+uniform sampler2D watch_tower_texture;
+uniform sampler2D normal_texture;
 
 in vec3 position;
 in vec3 normal;
 in vec2 texcoord;
+
 layout (location = 0) out vec4 out_color;
+
 float diffuse(vec3 direction) {
-    return max(0.0, dot(normal, direction));
+    return max(0.0, dot(texture(normal_texture, texcoord).xyz, direction));
 }
+
 void main()
 {
-    vec3 light = vec3(1.f);
-    vec3 color = texture2D(texture, texcoord).xyz * light;
+    vec4 shadow_pos = transform * vec4(position, 1.0);
+    shadow_pos /= shadow_pos.w;
+    shadow_pos = shadow_pos * 0.5 + vec4(0.5);
+    
+    bool in_shadow_texture = (shadow_pos.x > 0.0) && (shadow_pos.x < 1.0) && (shadow_pos.y > 0.0) && (shadow_pos.y < 1.0) && (shadow_pos.z > 0.0) && (shadow_pos.z < 1.0);
+    float shadow_factor = 1.0;
+    
+    float factor = 1.0;
+    if (in_shadow_texture) {
+        vec2 sum = vec2(0.0);
+        float sum_w = 0.0;
+        const int N = 2;
+        float radius = 3.0;
+        for (int x = -N; x <= N; ++x) {
+            for (int y = -N; y <= N; ++y) {
+                float c = exp(-float(x*x + y*y) / (radius*radius));
+                sum += c * texture(shadow_map, shadow_pos.xy + vec2(x,y) / vec2(textureSize(shadow_map, 0))).xy;
+                sum_w += c;
+            }
+        }
+        vec2 data = sum / sum_w;
+        float bias = -0.005;
+        float mu = data.r;
+        float sigma = data.g - mu * mu;
+        float z = shadow_pos.z + bias;
+        factor = (z < mu) ? 1.0 : sigma / (sigma + (z - mu) * (z - mu));
+        
+        float delta = 0.125;
+        if(factor<delta) {
+            factor = 0;
+        }
+        else {
+            factor = (factor-delta) * 1.f/(1-delta);
+        }
+    }
+
+    vec3 light = ambient + light_color * diffuse(light_direction) * factor;
+    vec3 color = texture(watch_tower_texture, texcoord).rgb * light;
     out_color = vec4(color, 1.0);
+}
+)";
+
+const char shadow_vertex_shader_source[] =
+    R"(#version 330 core
+uniform mat4 model;
+uniform mat4 transform;
+layout (location = 0) in vec3 in_position;
+layout (location = 2) in vec2 in_texcoord;
+out vec2 texcoord;
+void main()
+{
+    gl_Position = transform * model * vec4(in_position, 1.0);
+    texcoord = vec2(in_texcoord.x, 1.f-in_texcoord.y);
+}
+)";
+
+const char shadow_fragment_shader_source[] =
+    R"(#version 330 core
+in vec4 gl_FragCoord;
+in vec2 texcoord;
+layout (location = 0) out vec4 z_zz;
+void main()
+{   
+    float z = gl_FragCoord.z;
+    z_zz = vec4(z, z * z + 0.25 * (dFdx(z)*dFdx(z) + dFdy(z)*dFdy(z)), 0.0, 0.0);
 }
 )";
 
@@ -480,6 +595,7 @@ try
     GLuint camera_position_location = glGetUniformLocation(program, "camera_position");
     GLuint snow_texture_location = glGetUniformLocation(program, "snow_texture");
     GLuint environment_texture_location = glGetUniformLocation(program, "environment_texture");
+    GLuint ambient_location = glGetUniformLocation(program, "ambient");
 
     GLuint background_vao;
     glGenVertexArrays(1, &background_vao);
@@ -491,6 +607,7 @@ try
     GLuint view_projection_inverse_location = glGetUniformLocation(background_program, "view_projection_inverse");
     GLuint background_camera_position_location = glGetUniformLocation(background_program, "camera_position");
     GLuint background_environment_texture_location = glGetUniformLocation(background_program, "environment_texture");
+    GLuint background_ambient_location = glGetUniformLocation(background_program, "ambient");
 
     GLuint floor_vao, floor_vbo, floor_ebo;
     glGenVertexArrays(1, &floor_vao);
@@ -503,12 +620,21 @@ try
     auto floor_program = create_program(floor_vertex_shader, floor_fragment_shader);
 
     GLuint floor_snow_texture_location = glGetUniformLocation(floor_program, "snow_texture");
-    GLuint floor_model_location = glGetUniformLocation(program, "model");
-    GLuint floor_view_location = glGetUniformLocation(program, "view");
-    GLuint floor_projection_location = glGetUniformLocation(program, "projection");
+    GLuint floor_model_location = glGetUniformLocation(floor_program, "model");
+    GLuint floor_view_location = glGetUniformLocation(floor_program, "view");
+    GLuint floor_projection_location = glGetUniformLocation(floor_program, "projection");
+    GLuint floor_ambient_location = glGetUniformLocation(floor_program, "ambient");
+    GLuint floor_shadow_map_location = glGetUniformLocation(floor_program, "shadow_map");
+    GLuint floor_transform_location = glGetUniformLocation(floor_program, "transform");
+    GLuint floor_light_color_location = glGetUniformLocation(floor_program, "light_color");
+    GLuint floor_light_direction_location = glGetUniformLocation(floor_program, "light_direction");
+
     GLuint half_sphere_index_count;
+
+    std::vector<vertex> floor_vertices;
     {
         auto [vertices, indices] = generate_half_sphere(0.95f, 16);
+        floor_vertices = vertices;
 
         glBindBuffer(GL_ARRAY_BUFFER, floor_vbo);
         glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(vertices[0]), vertices.data(), GL_STATIC_DRAW);
@@ -533,8 +659,11 @@ try
     glGenBuffers(1, &sphere_vbo);
     glGenBuffers(1, &sphere_ebo);
     GLuint sphere_index_count;
+
+    std::vector<vertex> sphere_vertices;
     {
         auto [vertices, indices] = generate_sphere(1.f, 16);
+        sphere_vertices = vertices;
 
         glBindBuffer(GL_ARRAY_BUFFER, sphere_vbo);
         glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(vertices[0]), vertices.data(), GL_STATIC_DRAW);
@@ -553,21 +682,28 @@ try
     glEnableVertexAttribArray(3);
     glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void *)offsetof(vertex, texcoords));
 
+    auto shadow_vertex_shader = create_shader(GL_VERTEX_SHADER, shadow_vertex_shader_source);
+    auto shadow_fragment_shader = create_shader(GL_FRAGMENT_SHADER, shadow_fragment_shader_source);
+    auto shadow_program = create_program(shadow_vertex_shader, shadow_fragment_shader);
+
+    GLuint shadow_model_location = glGetUniformLocation(shadow_program, "model");
+    GLuint shadow_transform_location = glGetUniformLocation(shadow_program, "transform");
+
     auto watch_tower_vertex_shader = create_shader(GL_VERTEX_SHADER, watch_tower_vertex_shader_source);
     auto watch_tower_fragment_shader = create_shader(GL_FRAGMENT_SHADER, watch_tower_fragment_shader_source);
     auto watch_tower_program = create_program(watch_tower_vertex_shader, watch_tower_fragment_shader);
 
-    GLuint watch_tower_model_location = glGetUniformLocation(program, "model");
-    GLuint watch_tower_view_location = glGetUniformLocation(program, "view");
-    GLuint watch_tower_projection_location = glGetUniformLocation(program, "projection");
-    GLuint watch_tower_transform_location = glGetUniformLocation(program, "transform");
-    GLuint watch_tower_ambient_location = glGetUniformLocation(program, "ambient");
-    GLuint watch_tower_light_direction_location = glGetUniformLocation(program, "light_direction");
-    GLuint watch_tower_light_color_location = glGetUniformLocation(program, "light_color");
-    GLuint watch_tower_camera_position_location = glGetUniformLocation(program, "camera_position");
-    GLuint watch_tower_shadow_map_location = glGetUniformLocation(program, "shadow_map");
-    GLuint watch_tower_texture_location = glGetUniformLocation(program, "texture");
-    GLuint watch_tower_normal_location = glGetUniformLocation(program, "normal_texture");
+    GLuint watch_tower_model_location = glGetUniformLocation(watch_tower_program, "model");
+    GLuint watch_tower_view_location = glGetUniformLocation(watch_tower_program, "view");
+    GLuint watch_tower_projection_location = glGetUniformLocation(watch_tower_program, "projection");
+    GLuint watch_tower_transform_location = glGetUniformLocation(watch_tower_program, "transform");
+    GLuint watch_tower_ambient_location = glGetUniformLocation(watch_tower_program, "ambient");
+    GLuint watch_tower_light_direction_location = glGetUniformLocation(watch_tower_program, "light_direction");
+    GLuint watch_tower_light_color_location = glGetUniformLocation(watch_tower_program, "light_color");
+    GLuint watch_tower_camera_position_location = glGetUniformLocation(watch_tower_program, "camera_position");
+    GLuint watch_tower_shadow_map_location = glGetUniformLocation(watch_tower_program, "shadow_map");
+    GLuint watch_tower_texture_location = glGetUniformLocation(watch_tower_program, "watch_tower_texture");
+    GLuint watch_tower_normal_location = glGetUniformLocation(watch_tower_program, "normal_texture");
 
     std::string project_root = PROJECT_ROOT;
     GLuint snow_texture = load_texture(project_root + "/textures/snow_texture.jpeg");
@@ -666,8 +802,35 @@ try
         max_z = std::max(max_z, el.position[2]);
     }
 
-    std::vector<std::vector<float>> watch_tower_bounding_box(8, std::vector<float>(3));
-    watch_tower_bounding_box = {
+    for (vertex el : floor_vertices)
+    {
+        min_x = std::min(min_x, el.position[0]);
+        max_x = std::max(max_x, el.position[0]);
+
+        min_y = std::min(min_y, el.position[1]);
+        max_y = std::max(max_y, el.position[1]);
+
+        min_z = std::min(min_z, el.position[2]);
+        max_z = std::max(max_z, el.position[2]);
+    }
+
+    for (vertex el : sphere_vertices)
+    {
+        min_x = std::min(min_x, el.position[0]);
+        max_x = std::max(max_x, el.position[0]);
+
+        min_y = std::min(min_y, el.position[1]);
+        max_y = std::max(max_y, el.position[1]);
+
+        min_z = std::min(min_z, el.position[2]);
+        max_z = std::max(max_z, el.position[2]);
+    }
+
+    min_x = min_y = min_z = std::min({min_x - 0.f, min_y - 0.f, min_z - 3.f});
+    max_x = max_y = max_z = std::max({max_x + 0.f, max_y + 0.f, max_z + 3.f});
+
+    std::vector<std::vector<float>> bounding_box(8, std::vector<float>(3));
+    bounding_box = {
         {min_x, min_y, min_z},
         {min_x, min_y, max_z},
         {min_x, max_y, min_z},
@@ -677,6 +840,31 @@ try
         {max_x, max_y, min_z},
         {max_x, max_y, max_z},
     };
+
+    GLsizei shadow_map_resolution = 1024;
+    GLuint shadow_map;
+    glGenTextures(1, &shadow_map);
+    glActiveTexture(GL_TEXTURE0 + 1);
+    glBindTexture(GL_TEXTURE_2D, shadow_map);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, shadow_map_resolution, shadow_map_resolution, 0, GL_RGBA, GL_FLOAT, NULL);
+
+    GLuint shadow_fbo;
+    glGenFramebuffers(1, &shadow_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, shadow_fbo);
+    glFramebufferTexture(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, shadow_map, 0);
+
+    GLuint shadow_rbo;
+    glGenRenderbuffers(1, &shadow_rbo);
+    glBindRenderbuffer(GL_RENDERBUFFER, shadow_rbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, shadow_map_resolution, shadow_map_resolution);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, shadow_rbo);
+    if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        throw std::runtime_error("Incomplete framebuffer!");
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 
     auto last_frame_start = std::chrono::high_resolution_clock::now();
     float time = 0.f;
@@ -689,6 +877,9 @@ try
     float yaw = -90.f, pitch = 0.f;
     const float cameraMovementSpeed = 0.05f;
     const float cameraRotationSpeed = 50.f;
+
+    glm::vec3 ambient = glm::vec3(0.8f, 0.8f, 0.8f);
+    glm::vec3 ambient_background = glm::vec3(1.f, 1.f, 1.f);
 
     bool running = true;
     while (running)
@@ -757,6 +948,27 @@ try
         if (button_down[SDLK_s])
             cameraPos -= cameraMovementSpeed * cameraFront;
 
+        if (button_down[SDLK_z])
+        {
+            float ambient_ = std::min(1.f, ambient.r + 2.f * dt);
+            ambient = glm::vec3(ambient_, ambient_, ambient_);
+        }
+        if (button_down[SDLK_x])
+        {
+            float ambient_ = std::max(0.f, ambient.r - 2.f * dt);
+            ambient = glm::vec3(ambient_, ambient_, ambient_);
+        }
+        if (button_down[SDLK_c])
+        {
+            float ambient_ = std::min(1.f, ambient_background.r + 2.f * dt);
+            ambient_background = glm::vec3(ambient_, ambient_, ambient_);
+        }
+        if (button_down[SDLK_v])
+        {
+            float ambient_ = std::max(0.f, ambient_background.r - 2.f * dt);
+            ambient_background = glm::vec3(ambient_, ambient_, ambient_);
+        }
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         float near = 0.01f;
@@ -765,13 +977,14 @@ try
         float right = (top * width) / height;
 
         glm::mat4 model = glm::mat4(1.f);
+        model = glm::scale(model, glm::vec3(10.f));
 
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
 
         glm::mat4 projection = glm::mat4(1.f);
         projection = glm::perspective(glm::pi<float>() / 2.f, (1.f * width) / height, near, far);
 
-        glm::vec3 light_direction = glm::normalize(glm::vec3(std::sin(time * 0.5f) * 3, 2.f, std::cos(time * 0.5f) * 3));
+        glm::vec3 light_direction = glm::normalize(glm::vec3(2.f * cos(time), 2.f, 2.f * sin(time)));
 
         glm::vec3 camera_position = (glm::inverse(view) * glm::vec4(0.f, 0.f, 0.f, 1.f)).xyz();
 
@@ -781,18 +994,19 @@ try
         float c_x = (max_x + min_x) / 2;
         float c_y = (max_y + min_y) / 2;
         float c_z = (max_z + min_z) / 2;
+
         float light_x_mx = -infty;
-        for (auto &el : watch_tower_bounding_box)
+        for (auto &el : bounding_box)
         {
             light_x_mx = std::max(light_x_mx, std::abs(glm::dot({el[0] - c_x, el[1] - c_y, el[2] - c_z}, light_x)));
         }
         float light_y_mx = -infty;
-        for (auto &el : watch_tower_bounding_box)
+        for (auto &el : bounding_box)
         {
             light_y_mx = std::max(light_y_mx, std::abs(glm::dot({el[0] - c_x, el[1] - c_y, el[2] - c_z}, light_y)));
         }
         float light_z_mx = -infty;
-        for (auto &el : watch_tower_bounding_box)
+        for (auto &el : bounding_box)
         {
             light_z_mx = std::max(light_z_mx, std::abs(glm::dot({el[0] - c_x, el[1] - c_y, el[2] - c_z}, light_z)));
         }
@@ -813,6 +1027,7 @@ try
             glm::mat4 view_projection_inverse = glm::inverse(projection * view);
             glUniformMatrix4fv(view_projection_inverse_location, 1, GL_FALSE, reinterpret_cast<float *>(&view_projection_inverse));
             glUniform3fv(background_camera_position_location, 1, reinterpret_cast<float *>(&camera_position));
+            glUniform3fv(background_ambient_location, 1, reinterpret_cast<float *>(&ambient_background));
 
             glUniform1i(background_environment_texture_location, 0);
             glActiveTexture(GL_TEXTURE0);
@@ -828,8 +1043,38 @@ try
             glEnable(GL_CULL_FACE);
             glCullFace(GL_BACK);
 
-            model = glm::scale(model, glm::vec3(0.09f));
-            model = glm::translate(model, glm::vec3(0.f, -3.f, 0.f));
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, shadow_fbo);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            glViewport(0, 0, shadow_map_resolution, shadow_map_resolution);
+
+            model = glm::scale(model, glm::vec3(0.08f));
+            model = glm::translate(model, glm::vec3(0.f, -2.4f, 0.f));
+
+            glUseProgram(shadow_program);
+            glUniformMatrix4fv(shadow_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
+            glUniformMatrix4fv(shadow_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
+
+            glBindVertexArray(watch_tower_vao);
+            glDrawArrays(GL_TRIANGLES, 0, watch_tower_shapes[0].mesh.indices.size());
+
+            model = glm::mat4(1.f);
+            model = glm::scale(model, glm::vec3(10.f));
+
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            glViewport(0, 0, width, height);
+
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_CULL_FACE);
+        }
+
+        {
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LEQUAL);
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_BACK);
+
+            model = glm::scale(model, glm::vec3(0.08f));
+            model = glm::translate(model, glm::vec3(0.f, -2.4f, 0.f));
 
             glUseProgram(watch_tower_program);
             glUniformMatrix4fv(watch_tower_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
@@ -838,16 +1083,19 @@ try
             glUniformMatrix4fv(watch_tower_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
             glUniform3fv(watch_tower_light_direction_location, 1, reinterpret_cast<float *>(&light_direction));
             glUniform3fv(watch_tower_camera_position_location, 1, reinterpret_cast<float *>(&cameraPos));
+            glUniform3fv(watch_tower_ambient_location, 1, reinterpret_cast<float *>(&ambient));
             glUniform3f(watch_tower_light_color_location, 0.8f, 0.8f, 0.8f);
-            glUniform3f(watch_tower_ambient_location, 0.2f, 0.2f, 0.2f);
-            glUniform1i(watch_tower_shadow_map_location, 1);
 
-            glUniform1i(watch_tower_texture_location, 0);
+            glUniform1i(watch_tower_shadow_map_location, 0);
             glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, shadow_map);
+
+            glUniform1i(watch_tower_texture_location, 1);
+            glActiveTexture(GL_TEXTURE1);
             glBindTexture(GL_TEXTURE_2D, watch_tower_texture);
 
-            glUniform1i(watch_tower_normal_location, 1);
-            glActiveTexture(GL_TEXTURE1);
+            glUniform1i(watch_tower_normal_location, 2);
+            glActiveTexture(GL_TEXTURE2);
             glBindTexture(GL_TEXTURE_2D, watch_tower_normal_texture);
 
             glBindVertexArray(watch_tower_vao);
@@ -857,6 +1105,7 @@ try
             glDisable(GL_DEPTH_TEST);
 
             model = glm::mat4(1.f);
+            model = glm::scale(model, glm::vec3(10.f));
         }
 
         {
@@ -866,10 +1115,18 @@ try
             glUniformMatrix4fv(floor_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
             glUniformMatrix4fv(floor_view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
             glUniformMatrix4fv(floor_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
+            glUniform3fv(floor_ambient_location, 1, reinterpret_cast<float *>(&ambient));
+            glUniformMatrix4fv(floor_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
+            glUniform3f(floor_light_color_location, 0.8f, 0.8f, 0.8f);
+            glUniform3fv(floor_light_direction_location, 1, reinterpret_cast<float *>(&light_direction));
 
             glUniform1i(floor_snow_texture_location, 0);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, snow_texture);
+
+            glUniform1i(floor_shadow_map_location, 1);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, shadow_map);
 
             glBindVertexArray(floor_vao);
             glDrawElements(GL_TRIANGLES, half_sphere_index_count, GL_UNSIGNED_INT, nullptr);
@@ -890,6 +1147,7 @@ try
             glUniformMatrix4fv(projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
             glUniform3fv(light_direction_location, 1, reinterpret_cast<float *>(&light_direction));
             glUniform3fv(camera_position_location, 1, reinterpret_cast<float *>(&camera_position));
+            glUniform3fv(ambient_location, 1, reinterpret_cast<float *>(&ambient));
 
             glUniform1i(snow_texture_location, 0);
             glActiveTexture(GL_TEXTURE0);
