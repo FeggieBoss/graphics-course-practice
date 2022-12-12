@@ -1034,7 +1034,9 @@ try
     glm::vec3 ambient_background = glm::vec3(1.f, 1.f, 1.f);
 
     float k = 1;
-    const float wolf_speed = 10;
+    const float wolf_speed = 1.f;
+
+    float time_wolf = time;
 
     bool running = true;
     while (running)
@@ -1074,6 +1076,7 @@ try
         float dt = std::chrono::duration_cast<std::chrono::duration<float>>(now - last_frame_start).count();
         last_frame_start = now;
         time += !paused * dt;
+        time_wolf += !paused * dt;
 
         if (button_down[SDLK_LEFT])
             yaw -= cameraRotationSpeed * dt;
@@ -1200,7 +1203,6 @@ try
             glDrawArrays(GL_TRIANGLES, 0, 6);
         }
 
-
         {
             glEnable(GL_DEPTH_TEST);
             glDepthFunc(GL_LEQUAL);
@@ -1233,6 +1235,13 @@ try
 
         {
             glEnable(GL_DEPTH_TEST);
+
+            model = glm::scale(model, glm::vec3(0.3f));
+
+            time_wolf += !paused * (1-k)/10.f;
+            model = glm::rotate(model, -wolf_speed * 0.1f * time_wolf, glm::vec3(0.f, 1.f, 0.f));
+            model = glm::translate(model, glm::vec3(2.3f, -0.5f, 0.f));
+            model = glm::rotate(model, 0.18f, glm::vec3(1.f, 0.f, 0.f));
 
             glUseProgram(wolf_program);
             glUniformMatrix4fv(wolf_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
@@ -1330,6 +1339,9 @@ try
             glDisable(GL_DEPTH_TEST);
             glDisable(GL_BLEND);
             glDisable(GL_CULL_FACE);
+
+            model = glm::mat4(1.f);
+            model = glm::scale(model, glm::vec3(10.f));
         }
 
         {
