@@ -886,35 +886,44 @@ try
         }
 
         {
-            glEnable(GL_DEPTH_TEST);
-            glDepthFunc(GL_LEQUAL);
-            glEnable(GL_CULL_FACE);
-            glCullFace(GL_BACK);
+            float dy[6] = {0.f, -200.f, 200.f, 0.f, -350.f, 350.f};
+            int it = 0;
+            for (int i = 0; i < 3; ++i)
+            {
+                for (int j = 0; j <= i; ++j)
+                {
+                    glEnable(GL_DEPTH_TEST);
+                    glDepthFunc(GL_LEQUAL);
+                    glEnable(GL_CULL_FACE);
+                    glCullFace(GL_BACK);
 
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, shadow_fbo);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            glViewport(0, 0, shadow_map_resolution, shadow_map_resolution);
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, shadow_fbo);
+                    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                    glViewport(0, 0, shadow_map_resolution, shadow_map_resolution);
 
-            model = glm::mat4(1.f);
-            model = glm::scale(model, glm::vec3(0.008f));
-            model = glm::translate(model, glm::vec3(0.f, 5.f, 0.f));
+                    model = glm::mat4(1.f);
+                    model = glm::scale(model, glm::vec3(0.008f));
+                    model = glm::translate(model, glm::vec3(0.f, 10.f, -600.f));
+                    model = glm::translate(model, glm::vec3(dy[it++], 0.f, i * 300.f));
 
-            glUseProgram(shadow_program);
-            glUniformMatrix4fv(shadow_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
-            glUniformMatrix4fv(shadow_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
-            glUniform1i(shadow_is_wolf_location, 0);
+                    glUseProgram(shadow_program);
+                    glUniformMatrix4fv(shadow_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
+                    glUniformMatrix4fv(shadow_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
+                    glUniform1i(shadow_is_wolf_location, 0);
 
-            glBindVertexArray(watch_tower_vao);
-            glDrawArrays(GL_TRIANGLES, 0, watch_tower_shapes[0].mesh.indices.size());
+                    glBindVertexArray(watch_tower_vao);
+                    glDrawArrays(GL_TRIANGLES, 0, watch_tower_shapes[0].mesh.indices.size());
 
-            model = glm::mat4(1.f);
-            model = glm::scale(model, glm::vec3(10.f));
+                    model = glm::mat4(1.f);
+                    model = glm::scale(model, glm::vec3(10.f));
 
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-            glViewport(0, 0, width, height);
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+                    glViewport(0, 0, width, height);
 
-            glDisable(GL_DEPTH_TEST);
-            glDisable(GL_CULL_FACE);
+                    glDisable(GL_DEPTH_TEST);
+                    glDisable(GL_CULL_FACE);
+                }
+            }
         }
 
         {
@@ -938,7 +947,7 @@ try
 
         {
             float dy[6] = {0.f, -200.f, 200.f, 0.f, -350.f, 350.f};
-            int it=0;
+            int it = 0;
             for (int i = 0; i < 3; ++i)
             {
                 for (int j = 0; j <= i; ++j)
@@ -946,7 +955,7 @@ try
                     glEnable(GL_DEPTH_TEST);
                     glDepthFunc(GL_LEQUAL);
                     glEnable(GL_CULL_FACE);
-                    glCullFace(GL_BACK);
+                    glCullFace(GL_BACK);    
 
                     model = glm::mat4(1.f);
                     model = glm::scale(model, glm::vec3(0.008f));
