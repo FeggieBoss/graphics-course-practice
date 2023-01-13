@@ -239,7 +239,7 @@ void main()
         }
     }
     vec3 light = ambient + light_color * diffuse(light_direction) * factor;
-    vec3 color = texture(watch_tower_texture, texcoord).rgb * light;
+    vec3 color = texture(plane_texture, texcoord).rgb * light;
     out_color = vec4(color, 1.0);
 }
 )";
@@ -252,15 +252,20 @@ uniform mat4 projection;
 layout (location = 0) in vec3 in_position;
 layout (location = 1) in vec3 in_normal;
 layout (location = 2) in vec2 in_texcoord;
+layout (location = 3) in vec3 in_tangent;
+
 out vec3 position;
 out vec3 normal;
+out vec3 tangent;
 out vec2 texcoord;
+
 void main()
 {
     gl_Position = projection * view * model * vec4(in_position, 1.0);
     position = (model * vec4(in_position, 1.0)).xyz;
     normal = normalize((model * vec4(in_normal, 0.0)).xyz);
     texcoord = vec2(in_texcoord.x, 1.f-in_texcoord.y);
+    tangent = mat3(model) * in_tangent;
 }
 )";
 
@@ -274,15 +279,22 @@ uniform mat4 transform;
 uniform sampler2D shadow_map;
 uniform sampler2D watch_tower_texture;
 uniform sampler2D normal_texture;
+
 in vec3 position;
 in vec3 normal;
 in vec2 texcoord;
+in vec3 tangent;
+
 layout (location = 0) out vec4 out_color;
-float diffuse(vec3 direction) {
-    return max(0.0, dot(normal, direction));
+float diffuse(vec3 direction, vec3 normal_) {
+    return max(0.0, dot(normal_, direction));
 }
 void main()
 {
+    vec3 bitangent = cross(tangent, normal);
+    mat3 tbn = mat3(tangent, bitangent, normal);
+    vec3 real_normal = normalize(tbn * (texture(normal_texture, texcoord).xyz * 2.0 - vec3(1.0)));
+
     vec4 shadow_pos = transform * vec4(position, 1.0);
     shadow_pos /= shadow_pos.w;
     shadow_pos = shadow_pos * 0.5 + vec4(0.5);
@@ -318,7 +330,7 @@ void main()
             factor = (factor-delta) * 1.f/(1-delta);
         }
     }
-    vec3 light = ambient + light_color * diffuse(light_direction) * factor;
+    vec3 light = ambient + light_color * diffuse(light_direction, real_normal) * factor;
     vec3 color = texture(watch_tower_texture, texcoord).rgb * light;
     out_color = vec4(color, 1.0);
 }
@@ -634,6 +646,22 @@ try
     GLuint watch_tower_texture_location = glGetUniformLocation(watch_tower_program, "watch_tower_texture");
     GLuint watch_tower_normal_location = glGetUniformLocation(watch_tower_program, "normal_texture");
 
+    auto plane_vertex_shader = create_shader(GL_VERTEX_SHADER, plane_vertex_shader_source);
+    auto plane_fragment_shader = create_shader(GL_FRAGMENT_SHADER, plane_fragment_shader_source);
+    auto plane_program = create_program(plane_vertex_shader, plane_fragment_shader);
+
+    GLuint plane_model_location = glGetUniformLocation(plane_program, "model");
+    GLuint plane_view_location = glGetUniformLocation(plane_program, "view");
+    GLuint plane_projection_location = glGetUniformLocation(plane_program, "projection");
+    GLuint plane_transform_location = glGetUniformLocation(plane_program, "transform");
+    GLuint plane_ambient_location = glGetUniformLocation(plane_program, "ambient");
+    GLuint plane_light_direction_location = glGetUniformLocation(plane_program, "light_direction");
+    GLuint plane_light_color_location = glGetUniformLocation(plane_program, "light_color");
+    GLuint plane_camera_position_location = glGetUniformLocation(plane_program, "camera_position");
+    GLuint plane_shadow_map_location = glGetUniformLocation(plane_program, "shadow_map");
+    GLuint plane_texture_location = glGetUniformLocation(plane_program, "plane_texture");
+    GLuint plane_normal_location = glGetUniformLocation(plane_program, "normal_texture");
+
     GLuint background_vao;
     glGenVertexArrays(1, &background_vao);
 
@@ -648,14 +676,91 @@ try
 
     std::string project_root = PROJECT_ROOT;
     GLuint environment_texture = load_texture(project_root + "/textures/environment_map.jpg");
-    GLuint watch_tower_texture = load_texture(project_root + "/textures/thunderbolt_1k_col.jpg");
+    GLuint plane_texture = load_texture(project_root + "/textures/thunderbolt_1k_col.jpg");
+    GLuint watch_tower_texture = load_texture(project_root + "/textures/Wood_Tower_Col.jpg");
+    GLuint watch_tower_normal_texture = load_texture(project_root + "/textures/Wood_Tower_Nor.jpg");
     GLuint snow_texture = load_texture(project_root + "/textures/snow_texture.jpeg");
 
-    std::string watch_tower_path = project_root + "/textures/republic_p47_thunderbolt_final.obj";
-    tinyobj::attrib_t attrib;
+    std::string plane_path = project_root + "/textures/republic_p47_thunderbolt_final.obj";
+    tinyobj::attrib_t plane_attrib;
+    std::vector<tinyobj::shape_t> plane_shapes;
+    std::vector<tinyobj::material_t> plane_materials;
+    tinyobj::LoadObj(&plane_attrib, &plane_shapes, &plane_materials, nullptr, plane_path.c_str(), plane_path.c_str());
+
+    obj_data plane_data;
+    {
+        // Loop over shapes
+        for (size_t s = 0; s < plane_shapes.size(); s++)
+        {
+            // Loop over faces(polygon)
+            size_t index_offset = 0;
+            for (size_t f = 0; f < plane_shapes[s].mesh.num_face_vertices.size(); f++)
+            {
+                size_t fv = size_t(plane_shapes[s].mesh.num_face_vertices[f]);
+
+                // Loop over vertices in the face.
+                for (size_t v = 0; v < fv; v++)
+                {
+                    plane_data.vertices.push_back(obj_data::vertex());
+
+                    // access to vertex
+                    tinyobj::index_t idx = plane_shapes[s].mesh.indices[index_offset + v];
+
+                    tinyobj::real_t vx = plane_attrib.vertices[3 * size_t(idx.vertex_index) + 0];
+                    tinyobj::real_t vy = plane_attrib.vertices[3 * size_t(idx.vertex_index) + 1];
+                    tinyobj::real_t vz = plane_attrib.vertices[3 * size_t(idx.vertex_index) + 2];
+                    plane_data.vertices.back().position = {vx, vy, vz};
+
+                    // Check if `normal_index` is zero or positive. negative = no normal data
+                    if (idx.normal_index >= 0)
+                    {
+                        tinyobj::real_t nx = plane_attrib.normals[3 * size_t(idx.normal_index) + 0];
+                        tinyobj::real_t ny = plane_attrib.normals[3 * size_t(idx.normal_index) + 1];
+                        tinyobj::real_t nz = plane_attrib.normals[3 * size_t(idx.normal_index) + 2];
+
+                        plane_data.vertices.back().normal = {nx, ny, nz};
+                    }
+
+                    // Check if `texcoord_index` is zero or positive. negative = no texcoord data
+                    if (idx.texcoord_index >= 0)
+                    {
+                        tinyobj::real_t tx = plane_attrib.texcoords[2 * size_t(idx.texcoord_index) + 0];
+                        tinyobj::real_t ty = plane_attrib.texcoords[2 * size_t(idx.texcoord_index) + 1];
+
+                        plane_data.vertices.back().texcoord = {tx, ty};
+                    }
+                    // Optional: vertex colors
+                    // tinyobj::real_t red   = attrib.colors[3*size_t(idx.vertex_index)+0];
+                    // tinyobj::real_t green = attrib.colors[3*size_t(idx.vertex_index)+1];
+                    // tinyobj::real_t blue  = attrib.colors[3*size_t(idx.vertex_index)+2];
+                }
+                index_offset += fv;
+
+                // per-face material
+                plane_shapes[s].mesh.material_ids[f];
+            }
+        }
+    }
+    GLuint plane_vao, plane_vbo;
+    glGenVertexArrays(1, &plane_vao);
+    glBindVertexArray(plane_vao);
+
+    glGenBuffers(1, &plane_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, plane_vbo);
+    glBufferData(GL_ARRAY_BUFFER, plane_data.vertices.size() * sizeof(obj_data::vertex), plane_data.vertices.data(), GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *)(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *)(12));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *)(24));
+
+    std::string watch_tower_path = project_root + "/textures/watch_tower.obj";
+    tinyobj::attrib_t watch_tower_attrib;
     std::vector<tinyobj::shape_t> watch_tower_shapes;
     std::vector<tinyobj::material_t> watch_tower_materials;
-    tinyobj::LoadObj(&attrib, &watch_tower_shapes, &watch_tower_materials, nullptr, watch_tower_path.c_str(), watch_tower_path.c_str());
+    tinyobj::LoadObj(&watch_tower_attrib, &watch_tower_shapes, &watch_tower_materials, nullptr, watch_tower_path.c_str(), watch_tower_path.c_str());
 
     obj_data watch_tower_data;
     {
@@ -676,17 +781,17 @@ try
                     // access to vertex
                     tinyobj::index_t idx = watch_tower_shapes[s].mesh.indices[index_offset + v];
 
-                    tinyobj::real_t vx = attrib.vertices[3 * size_t(idx.vertex_index) + 0];
-                    tinyobj::real_t vy = attrib.vertices[3 * size_t(idx.vertex_index) + 1];
-                    tinyobj::real_t vz = attrib.vertices[3 * size_t(idx.vertex_index) + 2];
+                    tinyobj::real_t vx = watch_tower_attrib.vertices[3 * size_t(idx.vertex_index) + 0];
+                    tinyobj::real_t vy = watch_tower_attrib.vertices[3 * size_t(idx.vertex_index) + 1];
+                    tinyobj::real_t vz = watch_tower_attrib.vertices[3 * size_t(idx.vertex_index) + 2];
                     watch_tower_data.vertices.back().position = {vx, vy, vz};
 
                     // Check if `normal_index` is zero or positive. negative = no normal data
                     if (idx.normal_index >= 0)
                     {
-                        tinyobj::real_t nx = attrib.normals[3 * size_t(idx.normal_index) + 0];
-                        tinyobj::real_t ny = attrib.normals[3 * size_t(idx.normal_index) + 1];
-                        tinyobj::real_t nz = attrib.normals[3 * size_t(idx.normal_index) + 2];
+                        tinyobj::real_t nx = watch_tower_attrib.normals[3 * size_t(idx.normal_index) + 0];
+                        tinyobj::real_t ny = watch_tower_attrib.normals[3 * size_t(idx.normal_index) + 1];
+                        tinyobj::real_t nz = watch_tower_attrib.normals[3 * size_t(idx.normal_index) + 2];
 
                         watch_tower_data.vertices.back().normal = {nx, ny, nz};
                     }
@@ -694,8 +799,8 @@ try
                     // Check if `texcoord_index` is zero or positive. negative = no texcoord data
                     if (idx.texcoord_index >= 0)
                     {
-                        tinyobj::real_t tx = attrib.texcoords[2 * size_t(idx.texcoord_index) + 0];
-                        tinyobj::real_t ty = attrib.texcoords[2 * size_t(idx.texcoord_index) + 1];
+                        tinyobj::real_t tx = watch_tower_attrib.texcoords[2 * size_t(idx.texcoord_index) + 0];
+                        tinyobj::real_t ty = watch_tower_attrib.texcoords[2 * size_t(idx.texcoord_index) + 1];
 
                         watch_tower_data.vertices.back().texcoord = {tx, ty};
                     }
@@ -725,12 +830,25 @@ try
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *)(12));
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *)(24));
+    // glEnableVertexAttribArray(3);
+    // glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *)(28));
 
     float infty = std::numeric_limits<float>::infinity();
     float min_x = infty, max_x = -infty;
     float min_y = infty, max_y = -infty;
     float min_z = infty, max_z = -infty;
 
+    for (obj_data::vertex el : plane_data.vertices)
+    {
+        min_x = std::min(min_x, el.position[0]);
+        max_x = std::max(max_x, el.position[0]);
+
+        min_y = std::min(min_y, el.position[1]);
+        max_y = std::max(max_y, el.position[1]);
+
+        min_z = std::min(min_z, el.position[2]);
+        max_z = std::max(max_z, el.position[2]);
+    }
     for (obj_data::vertex el : watch_tower_data.vertices)
     {
         min_x = std::min(min_x, el.position[0]);
@@ -851,7 +969,7 @@ try
         last_frame_start = now;
         time += !paused * dt;
         shift += !paused;
-        if(shift==500)
+        if (shift == 500)
             shift = 0;
 
         if (button_down[SDLK_LEFT])
@@ -987,7 +1105,7 @@ try
                 {
                     model = glm::mat4(1.f);
                     model = glm::scale(model, glm::vec3(0.008f));
-                    model = glm::translate(model, glm::vec3(0.f, 10.f, 1400.f - shift * 5.f));
+                    model = glm::translate(model, glm::vec3(0.f, 1000.f, 1400.f - shift * 5.f));
                     model = glm::translate(model, glm::vec3(dy[it++], 0.f, i * 300.f));
 
                     glUseProgram(shadow_program);
@@ -995,13 +1113,44 @@ try
                     glUniformMatrix4fv(shadow_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
                     glUniform1i(shadow_is_wolf_location, 0);
 
-                    glBindVertexArray(watch_tower_vao);
-                    glDrawArrays(GL_TRIANGLES, 0, watch_tower_shapes[0].mesh.indices.size());
+                    glBindVertexArray(plane_vao);
+                    glDrawArrays(GL_TRIANGLES, 0, plane_shapes[0].mesh.indices.size());
 
                     model = glm::mat4(1.f);
                     model = glm::scale(model, glm::vec3(10.f));
                 }
             }
+
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            glViewport(0, 0, width, height);
+
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_CULL_FACE);
+        }
+
+        {
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LEQUAL);
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_BACK);
+
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, shadow_fbo);
+            glViewport(0, 0, shadow_map_resolution, shadow_map_resolution);
+
+            model = glm::mat4(1.f);
+            model = glm::scale(model, glm::vec3(0.4f));
+            model = glm::translate(model, glm::vec3(0.f, -4.65f, 0.f));
+
+            glUseProgram(shadow_program);
+            glUniformMatrix4fv(shadow_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
+            glUniformMatrix4fv(shadow_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
+            glUniform1i(shadow_is_wolf_location, 0);
+
+            glBindVertexArray(watch_tower_vao);
+            glDrawArrays(GL_TRIANGLES, 0, watch_tower_shapes[0].mesh.indices.size());
+
+            model = glm::mat4(1.f);
+            model = glm::scale(model, glm::vec3(10.f));
 
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             glViewport(0, 0, width, height);
@@ -1043,29 +1192,29 @@ try
 
                     model = glm::mat4(1.f);
                     model = glm::scale(model, glm::vec3(0.008f));
-                    model = glm::translate(model, glm::vec3(0.f, 10.f, 1400.f - shift * 5.f));
+                    model = glm::translate(model, glm::vec3(0.f, 1000.f, 1400.f - shift * 5.f));
                     model = glm::translate(model, glm::vec3(dy[it++], 0.f, i * 300.f));
 
-                    glUseProgram(watch_tower_program);
-                    glUniformMatrix4fv(watch_tower_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
-                    glUniformMatrix4fv(watch_tower_view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
-                    glUniformMatrix4fv(watch_tower_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
-                    glUniformMatrix4fv(watch_tower_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
-                    glUniform3fv(watch_tower_light_direction_location, 1, reinterpret_cast<float *>(&light_direction));
-                    glUniform3fv(watch_tower_camera_position_location, 1, reinterpret_cast<float *>(&cameraPos));
-                    glUniform3fv(watch_tower_ambient_location, 1, reinterpret_cast<float *>(&ambient));
-                    glUniform3f(watch_tower_light_color_location, 0.8f, 0.8f, 0.8f);
+                    glUseProgram(plane_program);
+                    glUniformMatrix4fv(plane_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
+                    glUniformMatrix4fv(plane_view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
+                    glUniformMatrix4fv(plane_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
+                    glUniformMatrix4fv(plane_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
+                    glUniform3fv(plane_light_direction_location, 1, reinterpret_cast<float *>(&light_direction));
+                    glUniform3fv(plane_camera_position_location, 1, reinterpret_cast<float *>(&cameraPos));
+                    glUniform3fv(plane_ambient_location, 1, reinterpret_cast<float *>(&ambient));
+                    glUniform3f(plane_light_color_location, 0.8f, 0.8f, 0.8f);
 
-                    glUniform1i(watch_tower_shadow_map_location, 0);
+                    glUniform1i(plane_shadow_map_location, 0);
                     glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, shadow_map);
 
-                    glUniform1i(watch_tower_texture_location, 1);
+                    glUniform1i(plane_texture_location, 1);
                     glActiveTexture(GL_TEXTURE1);
-                    glBindTexture(GL_TEXTURE_2D, watch_tower_texture);
+                    glBindTexture(GL_TEXTURE_2D, plane_texture);
 
-                    glBindVertexArray(watch_tower_vao);
-                    glDrawArrays(GL_TRIANGLES, 0, watch_tower_shapes[0].mesh.indices.size());
+                    glBindVertexArray(plane_vao);
+                    glDrawArrays(GL_TRIANGLES, 0, plane_shapes[0].mesh.indices.size());
 
                     glDisable(GL_CULL_FACE);
                     glDisable(GL_DEPTH_TEST);
@@ -1074,6 +1223,47 @@ try
                     model = glm::scale(model, glm::vec3(10.f));
                 }
             }
+        }
+        {
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LEQUAL);
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_BACK);
+
+            model = glm::mat4(1.f);
+            model = glm::scale(model, glm::vec3(0.4f));
+            model = glm::translate(model, glm::vec3(0.f, -4.65f, 0.f));
+
+            glUseProgram(watch_tower_program);
+            glUniformMatrix4fv(watch_tower_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
+            glUniformMatrix4fv(watch_tower_view_location, 1, GL_FALSE, reinterpret_cast<float *>(&view));
+            glUniformMatrix4fv(watch_tower_projection_location, 1, GL_FALSE, reinterpret_cast<float *>(&projection));
+            glUniformMatrix4fv(watch_tower_transform_location, 1, GL_FALSE, reinterpret_cast<float *>(&transform));
+            glUniform3fv(watch_tower_light_direction_location, 1, reinterpret_cast<float *>(&light_direction));
+            glUniform3fv(watch_tower_camera_position_location, 1, reinterpret_cast<float *>(&cameraPos));
+            glUniform3fv(watch_tower_ambient_location, 1, reinterpret_cast<float *>(&ambient));
+            glUniform3f(watch_tower_light_color_location, 0.8f, 0.8f, 0.8f);
+
+            glUniform1i(watch_tower_normal_location, 2);
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, watch_tower_normal_texture);
+
+            glUniform1i(watch_tower_shadow_map_location, 0);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, shadow_map);
+
+            glUniform1i(watch_tower_texture_location, 1);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, watch_tower_texture);
+
+            glBindVertexArray(watch_tower_vao);
+            glDrawArrays(GL_TRIANGLES, 0, watch_tower_shapes[0].mesh.indices.size());
+
+            glDisable(GL_CULL_FACE);
+            glDisable(GL_DEPTH_TEST);
+
+            model = glm::mat4(1.f);
+            model = glm::scale(model, glm::vec3(10.f));
         }
 
         {
