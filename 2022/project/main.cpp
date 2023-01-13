@@ -164,6 +164,86 @@ void main()
 }
 )";
 
+const char plane_vertex_shader_source[] =
+    R"(#version 330 core
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+layout (location = 0) in vec3 in_position;
+layout (location = 1) in vec3 in_normal;
+layout (location = 2) in vec2 in_texcoord;
+out vec3 position;
+out vec3 normal;
+out vec2 texcoord;
+void main()
+{
+    gl_Position = projection * view * model * vec4(in_position, 1.0);
+    position = (model * vec4(in_position, 1.0)).xyz;
+    normal = normalize((model * vec4(in_normal, 0.0)).xyz);
+    texcoord = vec2(in_texcoord.x, 1.f-in_texcoord.y);
+}
+)";
+
+const char plane_fragment_shader_source[] =
+    R"(#version 330 core
+uniform vec3 ambient;
+uniform vec3 light_direction;
+uniform vec3 light_color;
+uniform vec3 camera_position;
+uniform mat4 transform;
+uniform sampler2D shadow_map;
+uniform sampler2D plane_texture;
+uniform sampler2D normal_texture;
+in vec3 position;
+in vec3 normal;
+in vec2 texcoord;
+layout (location = 0) out vec4 out_color;
+float diffuse(vec3 direction) {
+    return max(0.0, dot(normal, direction));
+}
+void main()
+{
+    vec4 shadow_pos = transform * vec4(position, 1.0);
+    shadow_pos /= shadow_pos.w;
+    shadow_pos = shadow_pos * 0.5 + vec4(0.5);
+    
+    bool in_shadow_texture = (shadow_pos.x > 0.0) && (shadow_pos.x < 1.0) && (shadow_pos.y > 0.0) && (shadow_pos.y < 1.0) && (shadow_pos.z > 0.0) && (shadow_pos.z < 1.0);
+    float shadow_factor = 1.0;
+    
+    float factor = 1.0;
+    if (in_shadow_texture) {
+        vec2 sum = vec2(0.0);
+        float sum_w = 0.0;
+        const int N = 2;
+        float radius = 3.0;
+        for (int x = -N; x <= N; ++x) {
+            for (int y = -N; y <= N; ++y) {
+                float c = exp(-float(x*x + y*y) / (radius*radius));
+                sum += c * texture(shadow_map, shadow_pos.xy + vec2(x,y) / vec2(textureSize(shadow_map, 0))).xy;
+                sum_w += c;
+            }
+        }
+        vec2 data = sum / sum_w;
+        float bias = -0.005;
+        float mu = data.r;
+        float sigma = data.g - mu * mu;
+        float z = shadow_pos.z + bias;
+        factor = (z < mu) ? 1.0 : sigma / (sigma + (z - mu) * (z - mu));
+        
+        float delta = 0.125;
+        if(factor<delta) {
+            factor = 0;
+        }
+        else {
+            factor = (factor-delta) * 1.f/(1-delta);
+        }
+    }
+    vec3 light = ambient + light_color * diffuse(light_direction) * factor;
+    vec3 color = texture(watch_tower_texture, texcoord).rgb * light;
+    out_color = vec4(color, 1.0);
+}
+)";
+
 const char watch_tower_vertex_shader_source[] =
     R"(#version 330 core
 uniform mat4 model;
@@ -674,8 +754,8 @@ try
         max_z = std::max(max_z, el.position[2]);
     }
 
-    min_x = min_y = min_z = std::min({min_x - 0.f, min_y - 0.f, min_z - 2.f}) / 200.f;
-    max_x = max_y = max_z = std::max({max_x + 0.f, max_y + 0.f, max_z + 2.f}) / 200.f;
+    min_x = min_y = min_z = std::min({min_x - 0.f, min_y - 0.f, min_z - 2.f}) / 100.f;
+    max_x = max_y = max_z = std::max({max_x + 0.f, max_y + 0.f, max_z + 2.f}) / 100.f;
 
     std::vector<std::vector<float>> bounding_box(8, std::vector<float>(3));
     bounding_box = {
@@ -729,6 +809,9 @@ try
     glm::vec3 ambient = glm::vec3(0.8f, 0.8f, 0.8f);
     glm::vec3 ambient_background = glm::vec3(1.f, 1.f, 1.f);
 
+    int shift = 0;
+    float angle = 0;
+
     bool running = true;
     while (running)
     {
@@ -767,6 +850,9 @@ try
         float dt = std::chrono::duration_cast<std::chrono::duration<float>>(now - last_frame_start).count();
         last_frame_start = now;
         time += !paused * dt;
+        shift += !paused;
+        if(shift==500)
+            shift = 0;
 
         if (button_down[SDLK_LEFT])
             yaw -= cameraRotationSpeed * dt;
@@ -806,15 +892,13 @@ try
             float ambient_ = std::max(0.f, ambient.r - 2.f * dt);
             ambient = glm::vec3(ambient_, ambient_, ambient_);
         }
-        if (button_down[SDLK_c])
+        if (button_down[SDLK_q])
         {
-            float ambient_ = std::min(1.f, ambient_background.r + 2.f * dt);
-            ambient_background = glm::vec3(ambient_, ambient_, ambient_);
+            angle -= 0.1f;
         }
-        if (button_down[SDLK_v])
+        if (button_down[SDLK_e])
         {
-            float ambient_ = std::max(0.f, ambient_background.r - 2.f * dt);
-            ambient_background = glm::vec3(ambient_, ambient_, ambient_);
+            angle += 0.1f;
         }
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -886,24 +970,24 @@ try
         }
 
         {
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LEQUAL);
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_BACK);
+
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, shadow_fbo);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            glViewport(0, 0, shadow_map_resolution, shadow_map_resolution);
+
             float dy[6] = {0.f, -200.f, 200.f, 0.f, -350.f, 350.f};
             int it = 0;
             for (int i = 0; i < 3; ++i)
             {
                 for (int j = 0; j <= i; ++j)
                 {
-                    glEnable(GL_DEPTH_TEST);
-                    glDepthFunc(GL_LEQUAL);
-                    glEnable(GL_CULL_FACE);
-                    glCullFace(GL_BACK);
-
-                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, shadow_fbo);
-                    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-                    glViewport(0, 0, shadow_map_resolution, shadow_map_resolution);
-
                     model = glm::mat4(1.f);
                     model = glm::scale(model, glm::vec3(0.008f));
-                    model = glm::translate(model, glm::vec3(0.f, 10.f, -600.f));
+                    model = glm::translate(model, glm::vec3(0.f, 10.f, 1400.f - shift * 5.f));
                     model = glm::translate(model, glm::vec3(dy[it++], 0.f, i * 300.f));
 
                     glUseProgram(shadow_program);
@@ -916,14 +1000,14 @@ try
 
                     model = glm::mat4(1.f);
                     model = glm::scale(model, glm::vec3(10.f));
-
-                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-                    glViewport(0, 0, width, height);
-
-                    glDisable(GL_DEPTH_TEST);
-                    glDisable(GL_CULL_FACE);
                 }
             }
+
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            glViewport(0, 0, width, height);
+
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_CULL_FACE);
         }
 
         {
@@ -955,11 +1039,11 @@ try
                     glEnable(GL_DEPTH_TEST);
                     glDepthFunc(GL_LEQUAL);
                     glEnable(GL_CULL_FACE);
-                    glCullFace(GL_BACK);    
+                    glCullFace(GL_BACK);
 
                     model = glm::mat4(1.f);
                     model = glm::scale(model, glm::vec3(0.008f));
-                    model = glm::translate(model, glm::vec3(0.f, 10.f, -600.f));
+                    model = glm::translate(model, glm::vec3(0.f, 10.f, 1400.f - shift * 5.f));
                     model = glm::translate(model, glm::vec3(dy[it++], 0.f, i * 300.f));
 
                     glUseProgram(watch_tower_program);
@@ -997,6 +1081,7 @@ try
 
             model = glm::mat4(1.f);
             model = glm::scale(model, glm::vec3(10.f));
+            model = glm::rotate(model, angle, glm::vec3(0.f, 1.f, 0.f));
 
             glUseProgram(floor_program);
             glUniformMatrix4fv(floor_model_location, 1, GL_FALSE, reinterpret_cast<float *>(&model));
