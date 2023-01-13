@@ -286,14 +286,15 @@ in vec2 texcoord;
 in vec3 tangent;
 
 layout (location = 0) out vec4 out_color;
-float diffuse(vec3 direction, vec3 normal_) {
-    return max(0.0, dot(normal_, direction));
+float diffuse(vec3 direction, vec3 normal_2) {
+    return max(0.0, dot(normalize(normal_2), direction));
 }
 void main()
 {
     vec3 bitangent = cross(tangent, normal);
     mat3 tbn = mat3(tangent, bitangent, normal);
     vec3 real_normal = normalize(tbn * (texture(normal_texture, texcoord).xyz * 2.0 - vec3(1.0)));
+    real_normal = texture(normal_texture, texcoord).xyz;
 
     vec4 shadow_pos = transform * vec4(position, 1.0);
     shadow_pos /= shadow_pos.w;
@@ -331,7 +332,7 @@ void main()
         }
     }
     vec3 light = ambient + light_color * diffuse(light_direction, real_normal) * factor;
-    vec3 color = texture(watch_tower_texture, texcoord).rgb * light;
+    vec3 color = texture(watch_tower_texture, texcoord).rgb * light; // vec3(0.f,1.f,0.f)*light;
     out_color = vec4(color, 1.0);
 }
 )";
@@ -830,8 +831,8 @@ try
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *)(12));
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *)(24));
-    // glEnableVertexAttribArray(3);
-    // glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *)(28));
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(obj_data::vertex), (void *)(28));
 
     float infty = std::numeric_limits<float>::infinity();
     float min_x = infty, max_x = -infty;
